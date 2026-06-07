@@ -38,6 +38,79 @@ if (-not $Version) {
 }
 
 $target = "windows-x86_64"
+
+function Ensure-AwsCli {
+    if (Get-Command aws -ErrorAction SilentlyContinue) { return }
+    Write-Host ">>> aws CLI not found — installing." -ForegroundColor Yellow
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id Amazon.AWSCLI --silent --accept-source-agreements --accept-package-agreements
+    } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+        choco install awscli -y
+    } else {
+        $msi = Join-Path $env:TEMP "AWSCLIV2.msi"
+        Invoke-WebRequest -Uri "https://awscli.amazonaws.com/AWSCLIV2.msi" -OutFile $msi
+        Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait
+        Remove-Item $msi -ErrorAction SilentlyContinue
+    }
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
+        Write-Error "aws CLI install reported success but 'aws' is still not on PATH. Close this window, open a new PowerShell, and re-run."
+        exit 1
+    }
+    Write-Host ">>> aws CLI installed: $((aws --version) 2>&1 | Select-Object -First 1)" -ForegroundColor Green
+}
+
+function Ensure-DeployEnv {
+    Write-Host ">>> AWS / S3 credentials for this run (Enter to keep the [default]):" -ForegroundColor Cyan
+    Write-Host "    (values are set for this PowerShell only — nothing is persisted)" -ForegroundColor Cyan
+    Write-Host ""
+
+    function _Read($label, $default = "") {
+        if ($default) {
+            $v = Read-Host "  $label [$default]"
+            if (-not $v) { return $default } else { return $v }
+        } else {
+            return Read-Host "  $label"
+        }
+    }
+    function _ReadSecret($label, $default = "") {
+        $hint = if ($default) { " [keep existing — press Enter]" } else { "" }
+        $secure = Read-Host "  $label$hint" -AsSecureString
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try { $plain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+        finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+        if (-not $plain) { return $default } else { return $plain }
+    }
+
+    $defReg  = if ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION } else { "us-east-1" }
+    $defBuck = if ($env:S3_BUCKET)          { $env:S3_BUCKET }          else { "veskald" }
+
+    $key    = _Read       "AWS_ACCESS_KEY_ID"     $env:AWS_ACCESS_KEY_ID
+    $secret = _ReadSecret "AWS_SECRET_ACCESS_KEY" $env:AWS_SECRET_ACCESS_KEY
+    $reg    = _Read       "AWS_DEFAULT_REGION"    $defReg
+    $buck   = _Read       "S3_BUCKET"             $defBuck
+    $defBase = if ($env:AWS_DOWNLOADS_BASE_URL) { $env:AWS_DOWNLOADS_BASE_URL } else { "https://$buck.s3.$reg.amazonaws.com" }
+    $base   = _Read       "AWS_DOWNLOADS_BASE_URL" $defBase
+
+    if (-not $key -or -not $secret -or -not $buck) {
+        Write-Error "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and S3_BUCKET are required."
+        exit 1
+    }
+
+    $env:AWS_ACCESS_KEY_ID      = $key
+    $env:AWS_SECRET_ACCESS_KEY  = $secret
+    $env:AWS_DEFAULT_REGION     = $reg
+    $env:S3_BUCKET              = $buck
+    $env:AWS_DOWNLOADS_BASE_URL = $base
+    Write-Host ""
+}
+
+if ($Deploy) {
+    Ensure-AwsCli
+    Ensure-DeployEnv
+}
+
 Write-Host ">>> Building Veskald Execution Bridge $Version for $target" -ForegroundColor Cyan
 
 # ---- Venv ------------------------------------------------------------------
@@ -101,86 +174,7 @@ Write-Host ""
 Write-Host "Run it:  .\dist\veskald-execution-bridge.exe" -ForegroundColor Cyan
 
 # ---- Deploy to S3 ----------------------------------------------------------
-function Ensure-AwsCli {
-    if (Get-Command aws -ErrorAction SilentlyContinue) { return }
-    Write-Host ">>> aws CLI not found — installing." -ForegroundColor Yellow
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id Amazon.AWSCLI --silent --accept-source-agreements --accept-package-agreements
-    } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
-        choco install awscli -y
-    } else {
-        $msi = Join-Path $env:TEMP "AWSCLIV2.msi"
-        Invoke-WebRequest -Uri "https://awscli.amazonaws.com/AWSCLIV2.msi" -OutFile $msi
-        Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait
-        Remove-Item $msi -ErrorAction SilentlyContinue
-    }
-    # Refresh PATH so 'aws' is visible without restarting the shell.
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("Path", "User")
-    if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
-        Write-Error "aws CLI install reported success but 'aws' is still not on PATH. Close this window, open a new PowerShell, and re-run."
-        exit 1
-    }
-    Write-Host ">>> aws CLI installed: $((aws --version) 2>&1 | Select-Object -First 1)" -ForegroundColor Green
-}
-
-function Ensure-DeployEnv {
-    if ($env:AWS_ACCESS_KEY_ID -and $env:AWS_SECRET_ACCESS_KEY -and $env:S3_BUCKET) { return }
-
-    Write-Host ">>> Deploy env vars missing — let's set them up." -ForegroundColor Cyan
-    Write-Host "    They will be saved as User environment variables for next time." -ForegroundColor Cyan
-    Write-Host ""
-
-    function _Get($name) { [Environment]::GetEnvironmentVariable($name, "User") }
-    function _Set($name, $value) {
-        [Environment]::SetEnvironmentVariable($name, $value, "User")
-        Set-Item -Path "Env:$name" -Value $value
-    }
-    function _Read($label, $default = "") {
-        if ($default) {
-            $v = Read-Host "  $label [$default]"
-            if (-not $v) { return $default } else { return $v }
-        } else {
-            return Read-Host "  $label"
-        }
-    }
-    function _ReadSecret($label, $default = "") {
-        $hint = if ($default) { " [keep existing — press Enter]" } else { "" }
-        $secure = Read-Host "  $label$hint" -AsSecureString
-        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-        try { $plain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
-        finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-        if (-not $plain) { return $default } else { return $plain }
-    }
-
-    $key    = _Read       "AWS_ACCESS_KEY_ID"     (if ($env:AWS_ACCESS_KEY_ID)     { $env:AWS_ACCESS_KEY_ID }     else { _Get "AWS_ACCESS_KEY_ID" })
-    $secret = _ReadSecret "AWS_SECRET_ACCESS_KEY" (if ($env:AWS_SECRET_ACCESS_KEY) { $env:AWS_SECRET_ACCESS_KEY } else { _Get "AWS_SECRET_ACCESS_KEY" })
-    $reg    = _Read       "AWS_DEFAULT_REGION"    (if ($env:AWS_DEFAULT_REGION)    { $env:AWS_DEFAULT_REGION }    elseif (_Get "AWS_DEFAULT_REGION") { _Get "AWS_DEFAULT_REGION" } else { "us-east-1" })
-    $buck   = _Read       "S3_BUCKET"             (if ($env:S3_BUCKET)             { $env:S3_BUCKET }             elseif (_Get "S3_BUCKET")          { _Get "S3_BUCKET" }          else { "veskald" })
-    $defBase = if ($env:AWS_DOWNLOADS_BASE_URL) { $env:AWS_DOWNLOADS_BASE_URL }
-               elseif (_Get "AWS_DOWNLOADS_BASE_URL") { _Get "AWS_DOWNLOADS_BASE_URL" }
-               else { "https://$buck.s3.$reg.amazonaws.com" }
-    $base   = _Read       "AWS_DOWNLOADS_BASE_URL" $defBase
-
-    if (-not $key -or -not $secret -or -not $buck) {
-        Write-Error "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and S3_BUCKET are required."
-        exit 1
-    }
-
-    _Set "AWS_ACCESS_KEY_ID"      $key
-    _Set "AWS_SECRET_ACCESS_KEY"  $secret
-    _Set "AWS_DEFAULT_REGION"     $reg
-    _Set "S3_BUCKET"              $buck
-    _Set "AWS_DOWNLOADS_BASE_URL" $base
-
-    Write-Host ""
-    Write-Host ">>> Saved as User env vars. New shells will see them automatically." -ForegroundColor Green
-    Write-Host ""
-}
-
 if ($Deploy) {
-    Ensure-AwsCli
-    Ensure-DeployEnv
     $bucket = $env:S3_BUCKET
     $prefix = if ($env:S3_PREFIX) { $env:S3_PREFIX } else { "execution-bridge/releases" }
     $region = if ($env:S3_REGION) { $env:S3_REGION } elseif ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION } else { "us-east-1" }

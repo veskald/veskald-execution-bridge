@@ -241,20 +241,24 @@ On each desktop host (Linux, macOS, Windows) run the local builder with the
 `--deploy` flag. The script builds the binary and uploads the archives directly
 to S3, versioned + rolling `/latest/`.
 
-**First run is interactive — no manual setup needed.** When you pass `--deploy`
-the first time, the script will:
+**Every `--deploy` run is interactive — by design.** When you pass `--deploy`
+the script will:
 
 1. Install the AWS CLI v2 if it's missing (uses the official Amazon installer —
    `apt` is not required, works on Ubuntu 24.04+).
-2. Detect that AWS / S3 env vars are missing and prompt you for them, one at a
-   time (secret is read silently).
-3. Persist them to your shell rc file (`~/.zshrc` or `~/.bashrc`) inside a
-   marked block, with `chmod 600`. On Windows it stores them as **User**
-   environment variables (visible in System Properties → Environment Variables).
+2. Always prompt for AWS / S3 credentials, one field at a time. Whatever is
+   currently in your environment is shown as the `[default]` — press Enter to
+   keep it. The secret is read silently.
+3. **Session-only export** — values are exported into the current process and
+   nothing more. We do **not** write to `~/.bashrc` / `~/.zshrc` / User env
+   vars, so credentials you maintain for other projects in the same shell stay
+   intact.
 4. Continue with the upload.
 
-On subsequent runs, the env vars are already there, the script reuses them
-silently and uploads immediately.
+If you want zero prompts in CI or automation, pre-export the variables in the
+calling shell (or pass them inline: `S3_BUCKET=... AWS_ACCESS_KEY_ID=... ...
+installer/build-local.sh --deploy`). Each prompt accepts the env value as
+its default, so the interactive run becomes 5× pressing Enter.
 
 ```bash
 # Linux — first time:  asks 5 questions, then builds + uploads
@@ -269,11 +273,7 @@ installer/build-local.sh --universal --deploy v1.2.3
 .\installer\build-local.ps1 -Deploy -Version v1.2.3
 ```
 
-To **re-prompt** for credentials (e.g. rotate keys), delete the marked block
-from `~/.zshrc` / `~/.bashrc` (look for `# >>> veskald-deploy-env >>>`), or on
-Windows clear the corresponding User env vars, then re-run with `--deploy`.
-
-**Env vars** read by the deploy step (auto-collected on first run):
+**Env vars** read by the deploy step (always prompted, your environment is offered as the default):
 
 | Variable                  | Default                                    | Purpose                                    |
 | ---                       | ---                                        | ---                                        |

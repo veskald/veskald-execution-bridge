@@ -75,6 +75,100 @@ fi
 
 TARGET="${OS_TAG}-${ARCH_TAG}"
 
+_ensure_aws_cli() {
+  if command -v aws >/dev/null 2>&1; then return 0; fi
+
+  echo ">>> aws CLI not found — installing."
+  local uname_s; uname_s="$(uname -s)"
+
+  case "$uname_s" in
+    Linux)
+      local arch_tag
+      case "$(uname -m)" in
+        x86_64|amd64)  arch_tag="x86_64" ;;
+        aarch64|arm64) arch_tag="aarch64" ;;
+        *) echo "ERROR: unsupported CPU arch: $(uname -m)" >&2; exit 1 ;;
+      esac
+      if ! command -v curl >/dev/null 2>&1; then
+        echo "ERROR: curl required — install with: sudo apt-get install -y curl" >&2; exit 1
+      fi
+      if ! command -v unzip >/dev/null 2>&1; then
+        echo "    Installing unzip"
+        sudo apt-get install -y unzip 2>/dev/null \
+          || sudo dnf install -y unzip 2>/dev/null \
+          || sudo pacman -S --noconfirm unzip 2>/dev/null \
+          || { echo "ERROR: install unzip manually." >&2; exit 1; }
+      fi
+      local tmpdir; tmpdir="$(mktemp -d)"
+      echo "    Downloading https://awscli.amazonaws.com/awscli-exe-linux-${arch_tag}.zip"
+      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${arch_tag}.zip" -o "$tmpdir/awscliv2.zip"
+      unzip -q "$tmpdir/awscliv2.zip" -d "$tmpdir"
+      echo "    Running: sudo $tmpdir/aws/install --update"
+      sudo "$tmpdir/aws/install" --update
+      rm -rf "$tmpdir"
+      ;;
+    Darwin)
+      if command -v brew >/dev/null 2>&1; then
+        brew install awscli
+      else
+        local tmpdir; tmpdir="$(mktemp -d)"
+        curl -fsSL "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "$tmpdir/AWSCLIV2.pkg"
+        sudo installer -pkg "$tmpdir/AWSCLIV2.pkg" -target /
+        rm -rf "$tmpdir"
+      fi
+      ;;
+    *) echo "ERROR: unsupported OS: $uname_s" >&2; exit 1 ;;
+  esac
+
+  command -v aws >/dev/null 2>&1 || {
+    echo "ERROR: aws CLI install reported success but 'aws' is still not on PATH." >&2
+    echo "Restart your shell and re-run." >&2; exit 1
+  }
+  echo ">>> aws CLI installed: $(aws --version 2>&1 | head -n1)"
+  echo
+}
+
+_ensure_deploy_env() {
+  echo ">>> AWS / S3 credentials for this run (Enter to keep the [default]):"
+  echo "    (values are exported for this shell only — not saved to ~/.bashrc)"
+  echo
+
+  _prompt() {
+    local var="$1" label="$2" default="${3:-}" val
+    if [[ -n "$default" ]]; then read -rp "  $label [$default]: " val; val="${val:-$default}"
+    else                          read -rp "  $label: " val
+    fi
+    printf -v "$var" '%s' "$val"
+  }
+  _prompt_secret() {
+    local var="$1" label="$2" default="${3:-}" val hint=""
+    [[ -n "$default" ]] && hint=" [keep existing — press Enter]"
+    read -rsp "  $label$hint: " val; echo
+    val="${val:-$default}"
+    printf -v "$var" '%s' "$val"
+  }
+
+  _prompt        AWS_ACCESS_KEY_ID     "AWS_ACCESS_KEY_ID"      "${AWS_ACCESS_KEY_ID:-}"
+  _prompt_secret AWS_SECRET_ACCESS_KEY "AWS_SECRET_ACCESS_KEY"  "${AWS_SECRET_ACCESS_KEY:-}"
+  _prompt        AWS_DEFAULT_REGION    "AWS_DEFAULT_REGION"     "${AWS_DEFAULT_REGION:-us-east-1}"
+  _prompt        S3_BUCKET             "S3_BUCKET"              "${S3_BUCKET:-veskald}"
+  local default_base="${AWS_DOWNLOADS_BASE_URL:-https://${S3_BUCKET}.s3.${AWS_DEFAULT_REGION}.amazonaws.com}"
+  _prompt        AWS_DOWNLOADS_BASE_URL "AWS_DOWNLOADS_BASE_URL" "$default_base"
+
+  if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" || -z "$S3_BUCKET" ]]; then
+    echo "ERROR: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and S3_BUCKET are required." >&2
+    exit 1
+  fi
+
+  export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION S3_BUCKET AWS_DOWNLOADS_BASE_URL
+  echo
+}
+
+if [[ "$DEPLOY" == "1" ]]; then
+  _ensure_aws_cli
+  _ensure_deploy_env
+fi
+
 echo ">>> Building Veskald Execution Bridge $VERSION for $TARGET"
 
 # Local venv so we don't pollute the system Python.
@@ -272,158 +366,7 @@ fi
 #   s3://$S3_BUCKET/$S3_PREFIX/$VERSION/<file>     immutable, versioned
 #   s3://$S3_BUCKET/$S3_PREFIX/latest/<unversioned>  short-cached, overwritten
 
-_ensure_aws_cli() {
-  if command -v aws >/dev/null 2>&1; then return 0; fi
-
-  echo ">>> aws CLI not found — installing."
-  local uname_s; uname_s="$(uname -s)"
-
-  case "$uname_s" in
-    Linux)
-      local arch_tag
-      case "$(uname -m)" in
-        x86_64|amd64)  arch_tag="x86_64" ;;
-        aarch64|arm64) arch_tag="aarch64" ;;
-        *) echo "ERROR: unsupported CPU arch: $(uname -m)" >&2; exit 1 ;;
-      esac
-      if ! command -v curl >/dev/null 2>&1; then
-        echo "ERROR: curl required — install with: sudo apt-get install -y curl" >&2; exit 1
-      fi
-      if ! command -v unzip >/dev/null 2>&1; then
-        echo "    Installing unzip"
-        sudo apt-get install -y unzip 2>/dev/null \
-          || sudo dnf install -y unzip 2>/dev/null \
-          || sudo pacman -S --noconfirm unzip 2>/dev/null \
-          || { echo "ERROR: install unzip manually." >&2; exit 1; }
-      fi
-      local tmpdir; tmpdir="$(mktemp -d)"
-      echo "    Downloading https://awscli.amazonaws.com/awscli-exe-linux-${arch_tag}.zip"
-      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${arch_tag}.zip" -o "$tmpdir/awscliv2.zip"
-      unzip -q "$tmpdir/awscliv2.zip" -d "$tmpdir"
-      echo "    Running: sudo $tmpdir/aws/install --update"
-      sudo "$tmpdir/aws/install" --update
-      rm -rf "$tmpdir"
-      ;;
-    Darwin)
-      if command -v brew >/dev/null 2>&1; then
-        brew install awscli
-      else
-        local tmpdir; tmpdir="$(mktemp -d)"
-        curl -fsSL "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "$tmpdir/AWSCLIV2.pkg"
-        sudo installer -pkg "$tmpdir/AWSCLIV2.pkg" -target /
-        rm -rf "$tmpdir"
-      fi
-      ;;
-    *) echo "ERROR: unsupported OS: $uname_s" >&2; exit 1 ;;
-  esac
-
-  command -v aws >/dev/null 2>&1 || {
-    echo "ERROR: aws CLI install reported success but 'aws' is still not on PATH." >&2
-    echo "Restart your shell and re-run." >&2; exit 1
-  }
-  echo ">>> aws CLI installed: $(aws --version 2>&1 | head -n1)"
-  echo
-}
-
-_ensure_deploy_env() {
-  # If the essentials are already set, nothing to do.
-  if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" && -n "${S3_BUCKET:-}" ]]; then
-    return 0
-  fi
-
-  local MARKER_BEGIN="# >>> veskald-deploy-env >>>"
-  local MARKER_END="# <<< veskald-deploy-env <<<"
-  local RC
-  case "${SHELL:-}" in
-    */zsh)  RC="$HOME/.zshrc" ;;
-    */bash) RC="$HOME/.bashrc" ;;
-    *)
-      if   [[ -f "$HOME/.zshrc"  ]]; then RC="$HOME/.zshrc"
-      elif [[ -f "$HOME/.bashrc" ]]; then RC="$HOME/.bashrc"
-      else RC="$HOME/.bashrc"
-      fi
-      ;;
-  esac
-
-  echo ">>> Deploy env vars missing — let's set them up."
-  echo "    They will be saved to $RC so future runs don't ask again."
-  echo
-
-  _existing() {
-    local var="$1"
-    [[ -f "$RC" ]] || return
-    sed -n "/$MARKER_BEGIN/,/$MARKER_END/p" "$RC" \
-      | grep -E "^export $var=" | tail -n1 \
-      | sed -E "s/^export $var=\"?([^\"]*)\"?$/\1/"
-  }
-  _prompt() {
-    local var="$1" label="$2" default="${3:-}" val
-    if [[ -n "$default" ]]; then read -rp "  $label [$default]: " val; val="${val:-$default}"
-    else                          read -rp "  $label: " val
-    fi
-    printf -v "$var" '%s' "$val"
-  }
-  _prompt_secret() {
-    local var="$1" label="$2" default="${3:-}" val hint=""
-    [[ -n "$default" ]] && hint=" [keep existing — press Enter]"
-    read -rsp "  $label$hint: " val; echo
-    val="${val:-$default}"
-    printf -v "$var" '%s' "$val"
-  }
-
-  local cur_key cur_secret cur_region cur_bucket cur_base
-  cur_key="$(_existing AWS_ACCESS_KEY_ID || true)"
-  cur_secret="$(_existing AWS_SECRET_ACCESS_KEY || true)"
-  cur_region="$(_existing AWS_DEFAULT_REGION || true)"
-  cur_bucket="$(_existing S3_BUCKET || true)"
-  cur_base="$(_existing AWS_DOWNLOADS_BASE_URL || true)"
-
-  _prompt        AWS_ACCESS_KEY_ID     "AWS_ACCESS_KEY_ID"      "${AWS_ACCESS_KEY_ID:-$cur_key}"
-  _prompt_secret AWS_SECRET_ACCESS_KEY "AWS_SECRET_ACCESS_KEY"  "${AWS_SECRET_ACCESS_KEY:-$cur_secret}"
-  _prompt        AWS_DEFAULT_REGION    "AWS_DEFAULT_REGION"     "${AWS_DEFAULT_REGION:-${cur_region:-us-east-1}}"
-  _prompt        S3_BUCKET             "S3_BUCKET"              "${S3_BUCKET:-${cur_bucket:-veskald}}"
-  local default_base="${AWS_DOWNLOADS_BASE_URL:-${cur_base:-https://${S3_BUCKET}.s3.${AWS_DEFAULT_REGION}.amazonaws.com}}"
-  _prompt        AWS_DOWNLOADS_BASE_URL "AWS_DOWNLOADS_BASE_URL" "$default_base"
-
-  if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" || -z "$S3_BUCKET" ]]; then
-    echo "ERROR: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and S3_BUCKET are required." >&2
-    exit 1
-  fi
-
-  # Export for the rest of this run.
-  export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION S3_BUCKET AWS_DOWNLOADS_BASE_URL
-
-  # Persist to rc — strip any previous block, then append the fresh one.
-  touch "$RC"
-  local tmp; tmp="$(mktemp)"
-  awk -v b="$MARKER_BEGIN" -v e="$MARKER_END" '
-    $0 == b { skip=1; next }
-    $0 == e { skip=0; next }
-    !skip   { print }
-  ' "$RC" > "$tmp"
-  sed -i -e :a -e '/^$/{$d;N;ba' -e '}' "$tmp"
-  {
-    cat "$tmp"
-    echo
-    echo "$MARKER_BEGIN"
-    echo "export AWS_ACCESS_KEY_ID=\"$AWS_ACCESS_KEY_ID\""
-    echo "export AWS_SECRET_ACCESS_KEY=\"$AWS_SECRET_ACCESS_KEY\""
-    echo "export AWS_DEFAULT_REGION=\"$AWS_DEFAULT_REGION\""
-    echo "export S3_BUCKET=\"$S3_BUCKET\""
-    echo "export AWS_DOWNLOADS_BASE_URL=\"$AWS_DOWNLOADS_BASE_URL\""
-    echo "$MARKER_END"
-  } > "$RC"
-  rm -f "$tmp"
-  chmod 600 "$RC"
-
-  echo
-  echo ">>> Saved to $RC (new shells will load automatically)."
-  echo
-}
-
 _s3_deploy() {
-  _ensure_aws_cli
-  _ensure_deploy_env
   local prefix="${S3_PREFIX:-execution-bridge/releases}"
   local region="${S3_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
   echo
