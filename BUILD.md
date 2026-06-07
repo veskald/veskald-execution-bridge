@@ -359,7 +359,6 @@ otherwise the asset links on the Release page will 404 until you upload.
 | Key                       | Value                                             |
 | ---                       | ---                                               |
 | `AWS_DOWNLOADS_BASE_URL`  | e.g. `https://veskald.s3.us-east-1.amazonaws.com` |
-| `MACOS_ARCH_TAG` (opt)    | `universal2` (default), `arm64`, or `x86_64`      |
 | `S3_PREFIX` (opt)         | `execution-bridge/releases` (default)             |
 
 ---

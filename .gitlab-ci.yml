@@ -134,14 +134,13 @@ release:create:
     - if: $CI_COMMIT_TAG =~ /^v/
   variables:
     S3_PREFIX: "execution-bridge/releases"
-    MACOS_ARCH_TAG: "universal2"
   script:
     - |
       : "${AWS_DOWNLOADS_BASE_URL:?set AWS_DOWNLOADS_BASE_URL in CI/CD variables}"
       BASE="$AWS_DOWNLOADS_BASE_URL/$S3_PREFIX/$CI_COMMIT_TAG"
       LINUX_TAR="Veskald-Execution-Bridge-$CI_COMMIT_TAG-linux-x86_64.tar.gz"
       LINUX_INSTALLER="Veskald-Execution-Bridge-$CI_COMMIT_TAG-linux-x86_64-installer.tar.gz"
-      MACOS_TAR="Veskald-Execution-Bridge-$CI_COMMIT_TAG-macos-$MACOS_ARCH_TAG.tar.gz"
+      MACOS_TAR="Veskald-Execution-Bridge-$CI_COMMIT_TAG-macos-arm64.tar.gz"
       WINDOWS_ZIP="Veskald-Execution-Bridge-$CI_COMMIT_TAG-windows-x86_64.zip"
       echo "Creating GitLab Release for $CI_COMMIT_TAG with assets at $BASE/"
       release-cli create \
@@ -150,7 +149,7 @@ release:create:
         --description "Desktop binaries for Linux, macOS, and Windows. Docker image: \`$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG\`." \
         --assets-link "{\"name\":\"Linux — tar.gz (preserves +x)\",\"url\":\"$BASE/$LINUX_TAR\",\"link_type\":\"package\"}" \
         --assets-link "{\"name\":\"Linux — installer bundle\",\"url\":\"$BASE/$LINUX_INSTALLER\",\"link_type\":\"package\"}" \
-        --assets-link "{\"name\":\"macOS ($MACOS_ARCH_TAG) — .app.tar.gz\",\"url\":\"$BASE/$MACOS_TAR\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"macOS (arm64) — .app.tar.gz\",\"url\":\"$BASE/$MACOS_TAR\",\"link_type\":\"package\"}" \
         --assets-link "{\"name\":\"Windows — zip\",\"url\":\"$BASE/$WINDOWS_ZIP\",\"link_type\":\"package\"}" \
         --assets-link "{\"name\":\"SHA-256 — Linux tar.gz\",\"url\":\"$BASE/$LINUX_TAR.sha256\",\"link_type\":\"other\"}" \
         --assets-link "{\"name\":\"SHA-256 — Linux installer\",\"url\":\"$BASE/$LINUX_INSTALLER.sha256\",\"link_type\":\"other\"}" \
