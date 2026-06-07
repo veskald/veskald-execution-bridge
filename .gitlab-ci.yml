@@ -8,6 +8,7 @@
 stages:
   - validate
   - docker
+  - release
 
 variables:
   IMAGE: $CI_REGISTRY_IMAGE
@@ -94,7 +95,10 @@ docker:build-push:
   before_script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
     - docker run --privileged --rm tonistiigi/binfmt --install all
-    - docker buildx create --use --name builder
+    # buildx in DinD+TLS needs a named docker context — it refuses to consume
+    # DOCKER_HOST/DOCKER_TLS_CERTDIR straight from env.
+    - docker context create tls-env
+    - docker buildx create --use --name builder tls-env
   script:
     - |
       EXTRA_TAGS=""
@@ -108,3 +112,45 @@ docker:build-push:
         --push \
         .
     - echo "Pushed $IMAGE:$CI_COMMIT_TAG$( [ -n "$EXTRA_TAGS" ] && echo ' + :latest')"
+
+# ────────────────────────────────────────────────────────────────────
+# GitLab Release — attaches per-OS desktop builds as asset links.
+#
+# Prerequisite: before pushing the tag, the maintainer must have run
+# `installer/build-local.sh --deploy` (Linux + macOS) and
+# `installer/build-local.ps1 -Deploy` (Windows) so that the binaries
+# already live at https://$AWS_DOWNLOADS_BASE_URL/$S3_PREFIX/$TAG/.
+#
+# Configure in CI/CD → Variables:
+#   AWS_DOWNLOADS_BASE_URL   e.g. https://downloads.veskald.com
+#   S3_PREFIX                e.g. execution-bridge/releases
+#   MACOS_ARCH_TAG           one of: arm64 | x86_64 | universal2  (default: universal2)
+# ────────────────────────────────────────────────────────────────────
+release:create:
+  stage: release
+  needs: [docker:build-push]
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  variables:
+    S3_PREFIX: "execution-bridge/releases"
+    MACOS_ARCH_TAG: "universal2"
+  script:
+    - |
+      : "${AWS_DOWNLOADS_BASE_URL:?set AWS_DOWNLOADS_BASE_URL in CI/CD variables}"
+      BASE="$AWS_DOWNLOADS_BASE_URL/$S3_PREFIX/$CI_COMMIT_TAG"
+      LINUX_APPIMAGE="Veskald-Execution-Bridge-$CI_COMMIT_TAG-x86_64.AppImage"
+      LINUX_TAR="Veskald-Execution-Bridge-$CI_COMMIT_TAG-linux-x86_64.tar.gz"
+      LINUX_INSTALLER="Veskald-Execution-Bridge-$CI_COMMIT_TAG-linux-x86_64-installer.tar.gz"
+      MACOS_TAR="Veskald-Execution-Bridge-$CI_COMMIT_TAG-macos-$MACOS_ARCH_TAG.tar.gz"
+      WINDOWS_ZIP="Veskald-Execution-Bridge-$CI_COMMIT_TAG-windows-x86_64.zip"
+      echo "Creating GitLab Release for $CI_COMMIT_TAG with assets at $BASE/"
+      release-cli create \
+        --name "Veskald Execution Bridge $CI_COMMIT_TAG" \
+        --tag-name "$CI_COMMIT_TAG" \
+        --description "Desktop binaries for Linux, macOS, and Windows. Docker image: \`$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG\`." \
+        --assets-link "{\"name\":\"Linux — AppImage (raw)\",\"url\":\"$BASE/$LINUX_APPIMAGE\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"Linux — tar.gz (preserves +x)\",\"url\":\"$BASE/$LINUX_TAR\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"Linux — installer bundle\",\"url\":\"$BASE/$LINUX_INSTALLER\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"macOS ($MACOS_ARCH_TAG) — .app.tar.gz\",\"url\":\"$BASE/$MACOS_TAR\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"Windows — zip\",\"url\":\"$BASE/$WINDOWS_ZIP\",\"link_type\":\"package\"}"

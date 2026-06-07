@@ -31,9 +31,18 @@ sudo apt install -y python3.11 python3.11-venv python3-pip \
 ```bash
 installer/build-local.sh                    # auto-detects version via git
 installer/build-local.sh v1.2.3             # pin version explicitly
+installer/build-local.sh --deploy           # build + upload to S3 (see §5)
+installer/build-local.sh v1.2.3 --deploy    # both at once
 ```
 
-Output: `dist/Veskald-Execution-Bridge-<version>-x86_64.AppImage` (+ `.sha256`).
+Outputs in `dist/`:
+
+| File | Notes |
+|---|---|
+| `Veskald-Execution-Bridge-<v>-x86_64.AppImage` | raw AppImage — user must `chmod +x` after download |
+| `Veskald-Execution-Bridge-<v>-linux-x86_64.tar.gz` | wraps the AppImage **preserving `+x`** — no chmod after `tar xf` |
+| `Veskald-Execution-Bridge-<v>-linux-x86_64-installer.tar.gz` | bundle with `install.sh` for desktop-menu integration |
+| `*.sha256` for each archive | |
 
 ### Run
 
@@ -76,6 +85,8 @@ file "$(which python3)"
 installer/build-local.sh                  # native arch (arm64 or x86_64)
 installer/build-local.sh --universal      # one .app for both arches
 installer/build-local.sh --arch arm64     # force a specific arch
+installer/build-local.sh --deploy         # also upload to S3 (see §5)
+installer/build-local.sh v1.2.3 --universal --deploy   # pin version + universal + deploy
 ```
 
 Outputs:
@@ -134,8 +145,10 @@ Tested on Windows 10 / 11 x86_64.
 From the project root in PowerShell:
 
 ```powershell
-.\installer\build-local.ps1                   # auto version
-.\installer\build-local.ps1 -Version v1.2.3   # pin version
+.\installer\build-local.ps1                          # auto version
+.\installer\build-local.ps1 -Version v1.2.3          # pin version
+.\installer\build-local.ps1 -Deploy                  # also upload to S3 (see §5)
+.\installer\build-local.ps1 -Version v1.2.3 -Deploy  # both
 ```
 
 Output: `dist\Veskald-Execution-Bridge-<version>-windows-x86_64.zip` (+ `.sha256`).
@@ -228,19 +241,50 @@ On each desktop host (Linux, macOS, Windows) run the local builder with the
 `--deploy` flag. The script builds the binary and uploads the archives directly
 to S3, versioned + rolling `/latest/`.
 
-```bash
-# Linux
-S3_BUCKET=downloads.veskald.com installer/build-local.sh --deploy v1.2.3
+**First run is interactive — no manual setup needed.** When you pass `--deploy`
+the first time, the script will:
 
-# macOS (Apple Silicon native, or --universal for both arches)
-S3_BUCKET=downloads.veskald.com installer/build-local.sh --universal --deploy v1.2.3
+1. Install the AWS CLI v2 if it's missing (uses the official Amazon installer —
+   `apt` is not required, works on Ubuntu 24.04+).
+2. Detect that AWS / S3 env vars are missing and prompt you for them, one at a
+   time (secret is read silently).
+3. Persist them to your shell rc file (`~/.zshrc` or `~/.bashrc`) inside a
+   marked block, with `chmod 600`. On Windows it stores them as **User**
+   environment variables (visible in System Properties → Environment Variables).
+4. Continue with the upload.
+
+On subsequent runs, the env vars are already there, the script reuses them
+silently and uploads immediately.
+
+```bash
+# Linux — first time:  asks 5 questions, then builds + uploads
+installer/build-local.sh --deploy v1.2.3
+
+# macOS — same UX
+installer/build-local.sh --universal --deploy v1.2.3
 ```
 
 ```powershell
-# Windows
-$env:S3_BUCKET = "downloads.veskald.com"
+# Windows — same UX (uses winget / choco / direct MSI to install awscli)
 .\installer\build-local.ps1 -Deploy -Version v1.2.3
 ```
+
+To **re-prompt** for credentials (e.g. rotate keys), delete the marked block
+from `~/.zshrc` / `~/.bashrc` (look for `# >>> veskald-deploy-env >>>`), or on
+Windows clear the corresponding User env vars, then re-run with `--deploy`.
+
+**Env vars** read by the deploy step (auto-collected on first run):
+
+| Variable                  | Default                                    | Purpose                                    |
+| ---                       | ---                                        | ---                                        |
+| `AWS_ACCESS_KEY_ID`       | (prompt)                                   | AWS credentials                            |
+| `AWS_SECRET_ACCESS_KEY`   | (prompt, silent)                           | AWS credentials                            |
+| `AWS_DEFAULT_REGION`      | `us-east-1`                                | Region (also used as `S3_REGION` fallback) |
+| `S3_BUCKET`               | (prompt, default `veskald`)                | Destination bucket                         |
+| `AWS_DOWNLOADS_BASE_URL`  | `https://<bucket>.s3.<region>.amazonaws.com` | Public URL printed at the end + used by GitLab Release |
+| `S3_PREFIX`               | `execution-bridge/releases`                | Key prefix (not prompted, override via env if needed) |
+| `S3_REGION`               | falls back to `AWS_DEFAULT_REGION`         | Per-build override                         |
+| `AWS_PROFILE`             | —                                          | Use a non-default `~/.aws/credentials` profile instead of inline keys |
 
 S3 layout after deploy:
 
@@ -259,35 +303,64 @@ s3://<bucket>/execution-bridge/releases/
     └── ...
 ```
 
-Required env vars when using `--deploy`:
+#### One-time S3 setup (do this before the first `--deploy`)
 
-| Variable                | Default                          | Purpose                          |
-| ---                     | ---                              | ---                              |
-| `S3_BUCKET`             | (required)                       | Destination bucket               |
-| `S3_PREFIX`             | `execution-bridge/releases`      | Key prefix                       |
-| `S3_REGION`             | `us-east-1`                      | Bucket region                    |
-| `AWS_PROFILE` / `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | (your usual AWS auth) | Credentials |
-| `AWS_DOWNLOADS_BASE_URL`| `https://<bucket>.s3.<region>.amazonaws.com` | Printout URL only |
+1. Create the bucket in AWS Console — General purpose, region of your choice
+   (script defaults to `us-east-1`). Use a name without dots for HTTPS to
+   work out of the box (e.g. `veskald`, not `downloads.veskald.com`).
+2. **Disable "Block all public access"** on the bucket.
+3. Attach a bucket policy that allows public reads of the releases prefix:
 
-### Docker image → registry.gitlab.com (CI on tag push)
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Sid": "PublicReadReleases",
+       "Effect": "Allow",
+       "Principal": "*",
+       "Action": "s3:GetObject",
+       "Resource": "arn:aws:s3:::<bucket-name>/execution-bridge/releases/*"
+     }]
+   }
+   ```
 
-The only thing CI does. Pipeline in `.gitlab-ci.yml`:
+4. Get an Access Key ID + Secret Access Key (IAM user or root access keys —
+   personal preference; IAM user is safer). Keep them ready for the first
+   `--deploy` run.
+
+### Docker image + GitLab Release (CI on tag push)
+
+The pipeline in `.gitlab-ci.yml` does two things on every `v*` tag:
+
+1. **`docker:build-push`** — multi-arch `linux/amd64,linux/arm64` build &
+   push to `registry.gitlab.com/veskald/veskald-execution-bridge:<tag>`
+   (+ `:latest` for non-prerelease tags).
+2. **`release:create`** — creates a GitLab Release at **Deploy → Releases**
+   with the tag as name and asset links pointing at the desktop binaries
+   already uploaded to S3.
+
+So the **full release flow** is:
 
 ```bash
+# 1. Build + push desktop binaries to S3 from each platform host:
+installer/build-local.sh --deploy v1.2.3                    # on Linux
+installer/build-local.sh --universal --deploy v1.2.3        # on macOS
+.\installer\build-local.ps1 -Deploy -Version v1.2.3         # on Windows
+
+# 2. Tag + push — CI builds the Docker image and creates the GitLab Release
 git tag v1.2.3 && git push origin v1.2.3
 ```
 
-Triggers `authorize` → `docker` (multi-arch `linux/amd64,linux/arm64` build &
-push to `registry.gitlab.com/veskald/veskald-execution-bridge`). Tags:
+**Important:** the S3 uploads must happen **before** `git push --tags`,
+otherwise the asset links on the Release page will 404 until you upload.
 
-- `:v1.2.3`, `:1.2.3`, `:1.2`, `:1`, `:latest` (non-prerelease)
-- `:sha-<short>` (always)
+**One-time CI setup** — in GitLab → **Settings → CI/CD → Variables** add:
 
-Dry run without push:
-
-```bash
-gh workflow run "Build & Release" -f version=v0.0.0-dev -f push_image=false
-```
+| Key                       | Value                                             |
+| ---                       | ---                                               |
+| `AWS_DOWNLOADS_BASE_URL`  | e.g. `https://veskald.s3.us-east-1.amazonaws.com` |
+| `MACOS_ARCH_TAG` (opt)    | `universal2` (default), `arm64`, or `x86_64`      |
+| `S3_PREFIX` (opt)         | `execution-bridge/releases` (default)             |
 
 ---
 
@@ -352,18 +425,34 @@ Override with `VESKALD_LOGS_DIR=/somewhere/else`.
 ## Quick reference
 
 ```bash
-# Linux
-installer/build-local.sh                          # AppImage
+# ── Linux ─────────────────────────────────────────────────────────────
+installer/build-local.sh                          # build only, auto version
+installer/build-local.sh v1.2.3                   # build only, pinned version
+installer/build-local.sh --deploy                 # build + upload to S3
+installer/build-local.sh v1.2.3 --deploy          # all of the above
 
-# macOS (Apple Silicon mac, universal output)
-installer/build-local.sh --universal              # .app, both arches
+# ── macOS ─────────────────────────────────────────────────────────────
+installer/build-local.sh                          # native arch (arm64 or x86_64)
+installer/build-local.sh --universal              # one .app for both arches
+installer/build-local.sh --arch arm64             # force arch
+installer/build-local.sh v1.2.3 --universal --deploy  # full release flow
 
-# macOS (per-arch)
-installer/build-local.sh                          # native (arm64 or x86_64)
+# ── Windows (PowerShell) ──────────────────────────────────────────────
+.\installer\build-local.ps1                       # build only
+.\installer\build-local.ps1 -Version v1.2.3       # pinned version
+.\installer\build-local.ps1 -Deploy               # build + upload to S3
+.\installer\build-local.ps1 -Version v1.2.3 -Deploy
 
-# Windows (in PowerShell)
-.\installer\build-local.ps1                       # .exe in zip
-
-# All three via CI
-gh workflow run "Build & Release" -f version=v0.0.0-dev -f publish=false
+# ── CI release (tag-driven) ───────────────────────────────────────────
+# After all 3 desktop builds are uploaded to S3:
+git tag v1.2.3 && git push origin v1.2.3          # → CI builds Docker + creates GitLab Release
 ```
+
+### All flags at a glance
+
+| Flag (Linux/macOS) | PowerShell equivalent | Effect |
+|---|---|---|
+| `<version>` (positional, e.g. `v1.2.3`) | `-Version v1.2.3` | Pin version explicitly. Default: from `git describe --tags --always`. |
+| `--deploy` | `-Deploy` | After build, upload archives to S3. Prompts for AWS keys on first run and persists them. |
+| `--universal` | n/a (macOS only) | macOS: produce a single `.app` for arm64 + x86_64 (needs universal2 Python). |
+| `--arch arm64` / `--arch x86_64` / `--arch universal2` | n/a (macOS only) | macOS: force target arch. |
