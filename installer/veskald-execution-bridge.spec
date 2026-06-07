@@ -207,7 +207,7 @@ if IS_MAC:
         exe,
         name="Veskald Execution Bridge.app",
         icon=_icon(),
-        bundle_identifier="com.veskald.autotrader",
+        bundle_identifier="com.veskald.executionbridge",
         info_plist={
             "CFBundleName": "Veskald Execution Bridge",
             "CFBundleDisplayName": "Veskald Execution Bridge",
