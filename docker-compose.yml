@@ -1,0 +1,16 @@
+services:
+  trader:
+    build: .
+    image: execution-bridge:latest
+    container_name: execution-bridge
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./.unique_id:/app/.unique_id
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

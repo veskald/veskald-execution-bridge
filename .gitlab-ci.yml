@@ -1,19 +1,110 @@
-# You can override the included template(s) by including variable overrides
-# SAST customization: https://docs.gitlab.com/user/application_security/sast/#available-cicd-variables
-# Secret Detection customization: https://docs.gitlab.com/user/application_security/secret_detection/pipeline/configure/
-# Dependency Scanning customization: https://docs.gitlab.com/user/application_security/dependency_scanning/dependency_scanning_sbom/#customizing-analyzer-behavior
-# Container Scanning customization: https://docs.gitlab.com/user/application_security/container_scanning/#customizing-analyzer-behavior
-# Note that environment variables can be set in several places
-# See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
+# Veskald Execution Bridge — GitLab CI pipeline.
+#
+# CI scope: only the multi-arch Docker image is built and pushed to the
+# GitLab Container Registry. Desktop apps (Windows / macOS / Linux) are
+# built locally by the maintainer and pushed to S3 via
+# `installer/build-local.sh --deploy` (or .ps1 -Deploy).
+
 stages:
-- test
-- secret-detection
-sast:
-  stage: test
-include:
-- template: Security/SAST.gitlab-ci.yml
-- template: Security/Secret-Detection.gitlab-ci.yml
+  - validate
+  - docker
+
 variables:
-  SECRET_DETECTION_ENABLED: 'true'
-secret_detection:
-  stage: secret-detection
+  IMAGE: $CI_REGISTRY_IMAGE
+  GIT_DEPTH: "0"
+
+default:
+  interruptible: true
+
+# ────────────────────────────────────────────────────────────────────
+# Authorization gate
+# Only allowed GitLab users can trigger a release pipeline.
+# ────────────────────────────────────────────────────────────────────
+authorize:
+  stage: validate
+  image: alpine:3.20
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_PIPELINE_SOURCE == "web"
+  variables:
+    ALLOWED_USERS: "vvoloshchuk777"
+  script:
+    - |
+      if ! echo " $ALLOWED_USERS " | grep -q " $GITLAB_USER_LOGIN "; then
+        echo "ERROR: $GITLAB_USER_LOGIN is not authorized to trigger releases."
+        echo "Allowed users: $ALLOWED_USERS"
+        exit 1
+      fi
+      echo "OK: $GITLAB_USER_LOGIN is authorized"
+
+# ────────────────────────────────────────────────────────────────────
+# MR title check (Conventional Commits)
+# Runs on every MR open/update. Blocks merge when the title doesn't
+# match the type:capitalized-subject format.
+# ────────────────────────────────────────────────────────────────────
+mr-title:
+  stage: validate
+  image: alpine:3.20
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - |
+      TITLE="$CI_MERGE_REQUEST_TITLE"
+      PATTERN='^(feat|fix|perf|refactor|docs|test|build|ci|chore|revert)(\([^)]+\))?: [A-Z].+'
+      echo "MR title: $TITLE"
+      if echo "$TITLE" | grep -qE "$PATTERN"; then
+        echo "OK: Conventional Commits format"
+        exit 0
+      fi
+      cat <<'EOF'
+
+      ERROR: MR title does not match Conventional Commits.
+
+      Required format:
+        type: Subject in imperative mood, capitalized
+
+      Allowed types: feat fix perf refactor docs test build ci chore revert
+
+      Examples:
+        feat: Add Bybit testnet toggle in settings dialog
+        fix:  Reconnect socket after MACHINE token rotation
+        chore: Bump pybit to 5.16.0
+
+      EOF
+      exit 1
+
+# ────────────────────────────────────────────────────────────────────
+# Docker multi-arch build → GitLab Container Registry
+# Tags:  :<version>   always
+#        :latest      only for non-prerelease (no '-' in tag)
+# ────────────────────────────────────────────────────────────────────
+docker:build-push:
+  stage: docker
+  needs: [authorize]
+  image: docker:24
+  services:
+    - docker:24-dind
+  timeout: 30m
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_BUILDKIT: "1"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker run --privileged --rm tonistiigi/binfmt --install all
+    - docker buildx create --use --name builder
+  script:
+    - |
+      EXTRA_TAGS=""
+      if ! echo "$CI_COMMIT_TAG" | grep -q '-'; then
+        EXTRA_TAGS="-t $IMAGE:latest"
+      fi
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        -t "$IMAGE:$CI_COMMIT_TAG" \
+        $EXTRA_TAGS \
+        --push \
+        .
+    - echo "Pushed $IMAGE:$CI_COMMIT_TAG$( [ -n "$EXTRA_TAGS" ] && echo ' + :latest')"

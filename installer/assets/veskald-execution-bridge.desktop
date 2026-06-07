@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Veskald Execution Bridge
+GenericName=Automated Trading Client
+Comment=Automated trading bot for Binance, Bybit, Kraken, OKX, Coinbase
+Exec=veskald-execution-bridge %U
+Icon=veskald-execution-bridge
+Categories=Office;Finance;Network;
+Terminal=false
+StartupNotify=true
+StartupWMClass=Veskald Execution Bridge
+Keywords=trading;bot;crypto;futures;
