@@ -12,11 +12,11 @@
 #   - AWS CLI on PATH for -Deploy  (aws --version)
 #
 # Env vars used with -Deploy:
-#   S3_BUCKET              required — destination bucket
-#   S3_PREFIX              optional — default: execution-bridge/releases
-#   S3_REGION              optional — default: us-east-1
-#   AWS_PROFILE / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — standard AWS auth
-#   AWS_DOWNLOADS_BASE_URL optional — used for the "public URLs" printout
+#   S3_BUCKET              required -- destination bucket
+#   S3_PREFIX              optional -- default: execution-bridge/releases
+#   S3_REGION              optional -- default: us-east-1
+#   AWS_PROFILE / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY -- standard AWS auth
+#   AWS_DOWNLOADS_BASE_URL optional -- used for the "public URLs" printout
 
 [CmdletBinding()]
 param(
@@ -41,7 +41,7 @@ $target = "windows-x86_64"
 
 function Ensure-AwsCli {
     if (Get-Command aws -ErrorAction SilentlyContinue) { return }
-    Write-Host ">>> aws CLI not found — installing." -ForegroundColor Yellow
+    Write-Host ">>> aws CLI not found -- installing." -ForegroundColor Yellow
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         winget install --id Amazon.AWSCLI --silent --accept-source-agreements --accept-package-agreements
     } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
@@ -63,7 +63,7 @@ function Ensure-AwsCli {
 
 function Ensure-DeployEnv {
     Write-Host ">>> AWS / S3 credentials for this run (Enter to keep the [default]):" -ForegroundColor Cyan
-    Write-Host "    (values are set for this PowerShell only — nothing is persisted)" -ForegroundColor Cyan
+    Write-Host "    (values are set for this PowerShell only -- nothing is persisted)" -ForegroundColor Cyan
     Write-Host ""
 
     function _Read($label, $default = "") {
@@ -75,7 +75,7 @@ function Ensure-DeployEnv {
         }
     }
     function _ReadSecret($label, $default = "") {
-        $hint = if ($default) { " [keep existing — press Enter]" } else { "" }
+        $hint = if ($default) { " [keep existing -- press Enter]" } else { "" }
         $secure = Read-Host "  $label$hint" -AsSecureString
         $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
         try { $plain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
@@ -114,26 +114,72 @@ if ($Deploy) {
 Write-Host ">>> Building Veskald Execution Bridge $Version for $target" -ForegroundColor Cyan
 
 # ---- Venv ------------------------------------------------------------------
-$venv = Join-Path $root ".build-venv"
-if (-not (Test-Path $venv)) {
-    Write-Host ">>> Creating .build-venv" -ForegroundColor Cyan
-    python -m venv $venv
-}
+$venv       = Join-Path $root ".build-venv"
 $venvPython = Join-Path $venv "Scripts\python.exe"
 $venvPip    = Join-Path $venv "Scripts\pip.exe"
+
+# Find a working Python 3.x interpreter on Windows.
+# Order: py launcher -> active VIRTUAL_ENV -> python on PATH (rejecting the MS Store stub).
+function Find-Python {
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        try { & py -3.11 --version *> $null } catch {}
+        if ($LASTEXITCODE -eq 0) { return ,@("py", "-3.11") }
+        try { & py -3 --version *> $null } catch {}
+        if ($LASTEXITCODE -eq 0) { return ,@("py", "-3") }
+    }
+    if ($env:VIRTUAL_ENV) {
+        $venvPy = Join-Path $env:VIRTUAL_ENV "Scripts\python.exe"
+        if (Test-Path $venvPy) { return ,@($venvPy) }
+    }
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        $src = (Get-Command python).Source
+        if ($src -notmatch 'WindowsApps') {
+            try { & python --version *> $null } catch {}
+            if ($LASTEXITCODE -eq 0) { return ,@("python") }
+        }
+    }
+    return $null
+}
+
+if (-not (Test-Path $venvPython)) {
+    if (Test-Path $venv) {
+        Write-Host ">>> .build-venv exists but has no Scripts\python.exe (likely created from Git Bash/WSL). Recreating." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $venv
+    }
+    $pythonCmd = Find-Python
+    if (-not $pythonCmd) {
+        Write-Error @"
+No working Python 3 found. The 'python' on PATH is the Microsoft Store stub.
+Fix one of:
+  1) winget install Python.Python.3.11      (then close & reopen PowerShell)
+  2) Install from https://www.python.org/downloads/  (check 'Add to PATH')
+  3) Disable the Store stub: Settings -> Apps -> Advanced app settings -> App execution aliases -> turn off 'python.exe' and 'python3.exe'
+"@
+        exit 1
+    }
+    Write-Host ">>> Creating .build-venv using: $($pythonCmd -join ' ')" -ForegroundColor Cyan
+    $pyExe  = $pythonCmd[0]
+    $pyArgs = @()
+    if ($pythonCmd.Length -gt 1) { $pyArgs = $pythonCmd[1..($pythonCmd.Length - 1)] }
+    & $pyExe @pyArgs -m venv $venv
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) {
+        Write-Error "venv creation failed (exit $LASTEXITCODE). See output above."
+        exit 1
+    }
+}
 
 & $venvPython -m pip install --upgrade pip wheel | Out-Null
 & $venvPip install -r requirements.txt
 & $venvPip install -r requirements-gui.txt
 & $venvPip install --no-deps "coinbase-advanced-py>=1.8.2"
 & $venvPip install "pyinstaller==6.11.1"
-# Pillow → PyInstaller auto-converts logo.png to .ico for Windows.
+# Pillow -> PyInstaller auto-converts logo.png to .ico for Windows.
 & $venvPip install "Pillow>=10.0.0"
 
 # ---- Icon ------------------------------------------------------------------
 # Build looks for installer\assets\logo.png. Drop your icon there.
 if (-not (Test-Path "installer\assets\logo.png")) {
-    Write-Host "    (warning: installer\assets\logo.png missing — icon will be empty)" -ForegroundColor Yellow
+    Write-Host "    (warning: installer\assets\logo.png missing -- icon will be empty)" -ForegroundColor Yellow
 }
 
 # ---- PyInstaller -----------------------------------------------------------
