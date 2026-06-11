@@ -59,7 +59,7 @@ Three paths, pick the one that fits how you operate.
 On a fresh Linux server (Ubuntu / Debian / Fedora / RHEL / CentOS):
 
 ```bash
-curl -fsSL https://gitlab.com/veskald/veskald-execution-bridge/-/raw/main/installer/server-install.sh | bash
+bash <(curl -fsSL https://gitlab.com/veskald/veskald-execution-bridge/-/raw/main/installer/server-install.sh)
 ```
 
 The installer:

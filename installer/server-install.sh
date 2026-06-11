@@ -7,7 +7,7 @@
 # No clone needed.
 #
 # Run:
-#   curl -fsSL https://gitlab.com/veskald/veskald-execution-bridge/-/raw/main/installer/server-install.sh | bash
+#   bash <(curl -fsSL https://gitlab.com/veskald/veskald-execution-bridge/-/raw/main/installer/server-install.sh)
 #
 # Subcommands (once installed):
 #   bash server-install.sh install        # default — wizard + start
@@ -398,7 +398,7 @@ Options:
                  \$HOME/veskald-execution-bridge for non-root)
 
 Examples:
-  curl -fsSL https://gitlab.com/${REPO_GROUP}/${REPO_NAME}/-/raw/main/installer/server-install.sh | bash
+  bash <(curl -fsSL https://gitlab.com/${REPO_GROUP}/${REPO_NAME}/-/raw/main/installer/server-install.sh)
   bash server-install.sh update
   bash server-install.sh --prefix=\$HOME/trader install
 EOF
