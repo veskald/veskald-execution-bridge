@@ -1,10 +1,23 @@
-# Veskald Execution Bridge
+<div align="center">
 
-**Non-custodial signal execution client for Veskald.** Your exchange API keys never leave your own server.
+<h1>Veskald Execution Bridge</h1>
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE) [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/) [![Docker](https://img.shields.io/badge/docker-supported-blue.svg)](https://www.docker.com/) [![Exchanges](https://img.shields.io/badge/exchanges-5-blue.svg)](#supported-exchanges)
+<p><strong>Non-custodial signal execution client for Veskald.</strong> Your exchange API keys never leave your own server.</p>
 
-[Website](https://veskald.com) · [App](https://app.veskald.com) · [Report an issue](https://gitlab.com/veskald/veskald-execution-bridge/issues)
+<p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-supported-blue.svg" alt="Docker"></a>
+  <a href="#supported-exchanges"><img src="https://img.shields.io/badge/exchanges-5-blue.svg" alt="Exchanges"></a>
+</p>
+
+<p>
+  <a href="https://veskald.com">Website</a> ·
+  <a href="https://app.veskald.com">App</a> ·
+  <a href="https://gitlab.com/veskald/veskald-execution-bridge/issues">Report an issue</a>
+</p>
+
+</div>
 
 ---
 
@@ -83,7 +96,7 @@ A double-clickable GUI for Windows, macOS and Linux. No Python install required.
 | macOS Intel           | tar.gz (.app)  | `Veskald-Execution-Bridge-<version>-macos-x86_64.tar.gz`          |
 | Linux x86_64          | AppImage       | `Veskald-Execution-Bridge-<version>-x86_64.AppImage`              |
 
-Latest builds and SHA-256 checksums live on the [Releases page](https://gitlab.com/veskald/veskald-execution-bridge/releases). The first launch opens a Settings dialog for the MACHINE token and exchange keys; values are saved to a `.env` next to the executable.
+Latest builds and SHA-256 checksums live on the [Releases page](https://gitlab.com/veskald/veskald-execution-bridge/-/releases). The first launch opens a Settings dialog for the MACHINE token and exchange keys; values are saved to a `.env` next to the executable.
 
 Platform-specific notes (Windows SmartScreen prompts, macOS quarantine, glibc requirements) ship as `INSTALL.md` inside each archive.
 
