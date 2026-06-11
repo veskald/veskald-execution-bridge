@@ -3,6 +3,10 @@ import time
 from queue import Queue
 from typing import Dict, Optional
 import sys
+
+from lib.ssl_bootstrap import apply as _apply_ssl_bootstrap
+_apply_ssl_bootstrap()
+
 import socketio
 
 from config import HUB_URL, MACHINE_TOKEN, has_credentials
@@ -195,7 +199,11 @@ def main(exit_on_missing_config: bool = True) -> None:
         except Exception as e:
             if _stop_event.is_set():
                 break
-            logger.error("Connect error", extra={"error": str(e), "backoff": backoff})
+            logger.error(
+                f"Connect error: {e!r} (backoff {backoff}s)",
+                extra={"error": repr(e), "backoff": backoff},
+                exc_info=True,
+            )
             # Sleep in small slices so a stop request is honoured quickly.
             for _ in range(backoff * 10):
                 if _stop_event.is_set():

@@ -37,6 +37,8 @@ def main() -> None:
         return
 
     _ensure_module_path()
+    from lib.ssl_bootstrap import apply as _apply_ssl_bootstrap
+    _apply_ssl_bootstrap()
     from installer.ui.app import run_app
     sys.exit(run_app())
 

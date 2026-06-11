@@ -30,6 +30,7 @@ project_modules = [
     "lib.kraken",
     "lib.okx",
     "lib.logger",
+    "lib.ssl_bootstrap",
     "lib.symbols",
     "lib.trader_factory",
     "lib.userdir",
