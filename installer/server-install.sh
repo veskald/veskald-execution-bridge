@@ -115,8 +115,10 @@ ensure_prefix() {
   if [[ "$prefix" == /opt/* ]] || [[ "$prefix" == /usr/* ]] || [[ "$prefix" == /var/* ]]; then
     sudo_cmd mkdir -p "$prefix/logs"
     sudo_cmd chown -R "$(id -u):$(id -g)" "$prefix"
+    sudo_cmd chown -R 1000:1000 "$prefix/logs"
   else
     mkdir -p "$prefix/logs"
+    chown 1000:1000 "$prefix/logs" 2>/dev/null || chmod 0777 "$prefix/logs"
   fi
 }
 
