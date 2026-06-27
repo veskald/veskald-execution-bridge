@@ -286,7 +286,7 @@ action_install() {
   compose_in "$prefix" pull
 
   info "Starting container"
-  compose_in "$prefix" up -d
+  compose_in "$prefix" up -d --force-recreate
 
   sleep 3
   if [[ -z "$(compose_in "$prefix" ps --status running --quiet)" ]]; then
