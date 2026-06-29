@@ -27,6 +27,7 @@ REGISTRY="registry.gitlab.com"
 # Image tag — defaults to :latest. Override with env VESKALD_IMAGE_TAG=<tag>
 # to pin a specific build (e.g. an rc release, a sha- tag, or v0.0.1).
 IMAGE="${REGISTRY}/${REPO_GROUP}/${REPO_NAME}:${VESKALD_IMAGE_TAG:-latest}"
+INSTALLER_URL="https://gitlab.com/${REPO_GROUP}/${REPO_NAME}/-/raw/main/installer/server-install.sh"
 DEFAULT_PREFIX="/opt/veskald-execution-bridge"
 USER_PREFIX="${HOME}/veskald-execution-bridge"
 CONTAINER_NAME="veskald-execution-bridge"
@@ -122,6 +123,23 @@ ensure_prefix() {
   fi
 }
 
+save_installer_to_prefix() {
+  local prefix="$1"
+  local target="$prefix/server-install.sh"
+  # `bash <(curl ...)` makes $0 a transient /dev/fd/* path we can't copy
+  # from, so re-fetch the canonical URL in that case.
+  if [[ "$0" == /dev/fd/* || ! -f "$0" ]]; then
+    if ! curl -fsSL "$INSTALLER_URL" -o "$target" 2>/dev/null; then
+      warn "Could not save installer to $target. Use: bash <(curl -fsSL $INSTALLER_URL) SUBCOMMAND"
+      return
+    fi
+  else
+    install -m 0755 "$0" "$target" 2>/dev/null || cp "$0" "$target"
+  fi
+  chmod +x "$target"
+  info "Saved installer to $target"
+}
+
 # ---- wizard ---------------------------------------------------------------
 
 ask() {
@@ -134,11 +152,34 @@ ask() {
   echo "${var:-$default}"
 }
 
+ask_required() {
+  local label="$1" var
+  while :; do
+    read -r -p "  $label: " var || true
+    var="${var//$'\r'/}"
+    if [[ -n "$var" ]]; then
+      echo "$var"
+      return
+    fi
+    warn "Value cannot be empty. Try again."
+  done
+}
+
 ask_secret() {
   local label="$1" var
-  read -r -s -p "  $label: " var || true
-  echo
-  echo "$var"
+  while :; do
+    read -r -s -p "  $label: " var || true
+    echo
+    # Strip CR so a pasted secret with a trailing \r\n from a Windows
+    # clipboard or PuTTY doesn't turn into an empty value followed by a
+    # leaked next-line tail in .env.
+    var="${var//$'\r'/}"
+    if [[ -n "$var" ]]; then
+      echo "$var"
+      return
+    fi
+    warn "Value cannot be empty. Try again."
+  done
 }
 
 ask_yes_no() {
@@ -179,7 +220,7 @@ write_env() {
     if ! ask_yes_no "Configure $label?" "N"; then
       continue
     fi
-    KEYS[$key_var]="$(ask "$label API Key" "")"
+    KEYS[$key_var]="$(ask_required "$label API Key")"
     KEYS[$secret_var]="$(ask_secret "$label API Secret")"
     # extras: comma-separated "VAR" or "VAR=default"
     if [[ -n "$extras" ]]; then
@@ -214,6 +255,8 @@ write_env() {
     echo "MACHINE=$MACHINE"
     for var in "${!KEYS[@]}"; do
       val="${KEYS[$var]}"
+      val="${val//$'\r'/}"
+      val="${val//$'\n'/}"
       if [[ -n "$val" ]]; then
         echo "$var=$val"
       fi
@@ -269,6 +312,7 @@ action_install() {
   require_compose
 
   ensure_prefix "$prefix"
+  save_installer_to_prefix "$prefix"
 
   if [[ -f "$prefix/.env" ]]; then
     if ! ask_yes_no "$prefix/.env exists. Overwrite?" "N"; then
@@ -295,15 +339,16 @@ action_install() {
     exit 1
   fi
 
+  local self="$prefix/server-install.sh"
   echo
   c_green "  ✓ Veskald Execution Bridge is running."; echo
   echo
-  say "  Status:        bash $0 status"
-  say "  Logs:          bash $0 logs"
-  say "  Update image:  bash $0 update"
-  say "  Reconfigure:   bash $0 reconfigure"
-  say "  Stop:          bash $0 stop"
-  say "  Uninstall:     bash $0 uninstall"
+  say "  Status:        bash $self status"
+  say "  Logs:          bash $self logs"
+  say "  Update image:  bash $self update"
+  say "  Reconfigure:   bash $self reconfigure"
+  say "  Stop:          bash $self stop"
+  say "  Uninstall:     bash $self uninstall"
   echo
   say "  Config: $prefix/.env"
   say "  Logs:   $prefix/logs/"
@@ -312,6 +357,7 @@ action_install() {
 action_update() {
   local prefix; prefix="$(resolve_prefix)"
   [[ -f "$prefix/docker-compose.yml" ]] || die "Not installed at $prefix. Run install first."
+  save_installer_to_prefix "$prefix"
   info "Pulling latest image"
   compose_in "$prefix" pull
   info "Restarting container"
@@ -348,6 +394,7 @@ action_stop() {
 action_reconfigure() {
   local prefix; prefix="$(resolve_prefix)"
   [[ -f "$prefix/docker-compose.yml" ]] || die "Not installed at $prefix. Run install first."
+  save_installer_to_prefix "$prefix"
   write_env "$prefix"
   info "Restarting container with new config"
   compose_in "$prefix" up -d --force-recreate
