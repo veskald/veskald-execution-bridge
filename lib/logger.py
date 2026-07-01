@@ -4,7 +4,7 @@ import os
 import sys
 from typing import Any, Dict, Optional
 
-from config import MACHINE_TOKEN, UNIQUE_ID
+from config import GRAYLOG_HOST, GRAYLOG_PORT, MACHINE_TOKEN, UNIQUE_ID
 from lib.userdir import app_logs_dir
 
 
@@ -107,6 +107,21 @@ def _configure_root_once() -> None:
         "[%(ctx)s] [%(machine_token)s] [%(user_id)s]"
     ))
     root.addHandler(file_handler)
+
+    if GRAYLOG_HOST:
+        try:
+            import graypy
+            gelf_handler = graypy.GELFUDPHandler(
+                GRAYLOG_HOST,
+                GRAYLOG_PORT,
+                extra_fields=True,
+                debugging_fields=False,
+            )
+            gelf_handler.setLevel(logging.DEBUG)
+            gelf_handler.addFilter(ctx_filter)
+            root.addHandler(gelf_handler)
+        except Exception as e:
+            sys.stderr.write(f"[logger] Graylog handler init failed: {e}\n")
 
 
     # Skip the console handler when there's no point printing to a terminal:

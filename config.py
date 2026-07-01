@@ -15,6 +15,10 @@ load_dotenv(os.path.join(_APP_DIR, ".env"), override=True)
 HUB_URL = os.getenv("HUB_URL")
 MACHINE_TOKEN = os.getenv("MACHINE")
 
+# Graylog (GELF UDP). Handler is only attached when GRAYLOG_HOST is set.
+GRAYLOG_HOST = os.getenv("GRAYLOG_HOST")
+GRAYLOG_PORT = int(os.getenv("GRAYLOG_PORT"))
+
 # Binance USDⓈ-M
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
