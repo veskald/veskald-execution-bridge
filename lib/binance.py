@@ -32,10 +32,10 @@ _NON_RETRYABLE = {
 }
 _RETRYABLE = {-1000, -1001, -1003, -1006, -1007, -1008, -1021, -1099}
 
-# Известные текстовые паттерны Binance, которые не должны ретраиться
-# (биржа их часто возвращает БЕЗ числового code в обёртке исключения SDK).
+# Known Binance error texts that must not be retried (the exchange often
+# returns them WITHOUT a numeric code inside the SDK exception wrapper).
 _NON_RETRYABLE_TEXTS = (
-    "open stop or take profit order with gte and closeposition",  # дубль защитного ордера
+    "open stop or take profit order with gte and closeposition",  # duplicate protective order
     "order would immediately trigger",
     "reduceonly order is rejected",
     "reduceonly order failed",
@@ -103,6 +103,23 @@ class VeskaldBinance(BaseTrader):
     def _resolve_position_side(direction: str, position_mode: PositionMode) -> str:
         return direction.upper() if position_mode == "HEDGE" else "BOTH"
 
+
+    def set_position_mode(self, mode: PositionMode) -> bool:
+        try:
+            self.client.rest_api.change_position_mode(
+                dual_side_position="true" if mode == "HEDGE" else "false",
+            )
+        except Exception as e:
+            if "no need to change" in str(e).lower():
+                self._position_mode_cache = None
+                return True
+            self.logger.error(
+                f"Binance change_position_mode failed: {e}",
+                extra={"broker": self.BROKER_NAME},
+            )
+            return False
+        self._position_mode_cache = None
+        return True
 
     def get_position_mode(self) -> Optional[PositionMode]:
         if self._position_mode_cache is not None:
@@ -316,10 +333,10 @@ class VeskaldBinance(BaseTrader):
                     f"Restored old SL @ {s['trigger_price']} (id={rid})",
                     extra={"symbol": symbol, "broker": self.BROKER_NAME},
                 )
-                break  # достаточно одного защитного
+                break  # one protective order is enough
 
         if not restored:
-            # 5) Худший сценарий — позиция голая. Закрываем рынком.
+            # 5) Worst case — the position is naked. Close at market.
             self.logger.critical(
                 "Both new SL and old-SL restore failed — emergency closing position",
                 extra={"symbol": symbol, "broker": self.BROKER_NAME},

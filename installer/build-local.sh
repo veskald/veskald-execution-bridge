@@ -172,8 +172,52 @@ fi
 echo ">>> Building Veskald Execution Bridge $VERSION for $TARGET"
 
 # Local venv so we don't pollute the system Python.
-PY="${PYTHON:-python3}"
+# PySide6==6.7.3 and pyinstaller==6.11.1 support Python 3.9–3.12 only.
+_py_ok() {
+  command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" -c 'import sys; sys.exit(0 if (3, 9) <= sys.version_info[:2] < (3, 13) else 1)' 2>/dev/null
+}
+
+if [[ -n "${PYTHON:-}" ]]; then
+  PY="$PYTHON"
+  _py_ok "$PY" || { echo "ERROR: PYTHON=$PY is not Python 3.9–3.12" >&2; exit 1; }
+else
+  # Try bare names and well-known absolute paths: an activated venv earlier
+  # on PATH can shadow a system pythonX.Y with a symlink to something else.
+  CANDIDATES=()
+  for v in 3.11 3.12 3.10 3.9; do
+    CANDIDATES+=(
+      "python$v"
+      "/usr/bin/python$v"
+      "/usr/local/bin/python$v"
+      "/opt/homebrew/bin/python$v"
+      "/Library/Frameworks/Python.framework/Versions/$v/bin/python$v"
+    )
+  done
+  CANDIDATES+=(python3)
+  PY=""
+  for cand in "${CANDIDATES[@]}"; do
+    if _py_ok "$cand"; then PY="$cand"; break; fi
+  done
+  if [[ -z "$PY" ]]; then
+    echo "ERROR: no Python 3.9–3.12 on PATH (python3 is $(python3 -V 2>&1 || echo 'not found'))." >&2
+    echo "       Install one, e.g.: sudo apt install python3.11 python3.11-venv" >&2
+    echo "       or point PYTHON=/path/to/python3.11 at one." >&2
+    exit 1
+  fi
+fi
+
 VENV="$ROOT/.build-venv"
+# A system Python upgrade can swap the interpreter underneath an existing
+# venv, leaving bin/python unable to see the venv's site-packages.
+if [[ -d "$VENV" ]]; then
+  WANT="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+  HAVE="$("$VENV/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+  if [[ "$HAVE" != "$WANT" ]]; then
+    echo ">>> .build-venv is stale (Python ${HAVE:-broken}, want $WANT) — recreating"
+    rm -rf "$VENV"
+  fi
+fi
 if [[ ! -d "$VENV" ]]; then
   "$PY" -m venv "$VENV"
 fi

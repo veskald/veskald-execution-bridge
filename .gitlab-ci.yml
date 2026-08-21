@@ -137,25 +137,39 @@ release:create:
   script:
     - |
       : "${AWS_DOWNLOADS_BASE_URL:?set AWS_DOWNLOADS_BASE_URL in CI/CD variables}"
-      # Point releases at the rolling latest/ mirror rather than the
-      # per-tag folder — not every tag ships a fresh build for every OS,
-      # so versioned URLs would 404 for OSes skipped this cycle. latest/
-      # always carries the most recent deployed binary per OS.
-      BASE="$AWS_DOWNLOADS_BASE_URL/$S3_PREFIX/latest"
-      LINUX_TAR="Veskald-Execution-Bridge-linux-x86_64.tar.gz"
-      LINUX_INSTALLER="Veskald-Execution-Bridge-linux-x86_64-installer.tar.gz"
-      MACOS_TAR="Veskald-Execution-Bridge-macos-arm64.tar.gz"
-      WINDOWS_ZIP="Veskald-Execution-Bridge-windows-x86_64.zip"
-      echo "Creating GitLab Release for $CI_COMMIT_TAG with assets at $BASE/"
+      # Every package gets two links: the immutable per-tag snapshot and the
+      # rolling latest/ mirror. Not every tag ships a fresh build for every
+      # OS, so a versioned URL can 404 for an OS skipped this cycle —
+      # latest/ always carries the most recent deployed binary per OS.
+      BASE_TAG="$AWS_DOWNLOADS_BASE_URL/$S3_PREFIX/$CI_COMMIT_TAG"
+      BASE_LATEST="$AWS_DOWNLOADS_BASE_URL/$S3_PREFIX/latest"
+      P="Veskald-Execution-Bridge"
+      LINUX_TAR="$P-linux-x86_64.tar.gz"
+      LINUX_TAR_V="$P-$CI_COMMIT_TAG-linux-x86_64.tar.gz"
+      LINUX_INSTALLER="$P-linux-x86_64-installer.tar.gz"
+      LINUX_INSTALLER_V="$P-$CI_COMMIT_TAG-linux-x86_64-installer.tar.gz"
+      MACOS_TAR="$P-macos-arm64.tar.gz"
+      MACOS_TAR_V="$P-$CI_COMMIT_TAG-macos-arm64.tar.gz"
+      WINDOWS_ZIP="$P-windows-x86_64.zip"
+      WINDOWS_ZIP_V="$P-$CI_COMMIT_TAG-windows-x86_64.zip"
+      echo "Creating GitLab Release for $CI_COMMIT_TAG with assets at $BASE_TAG/ and $BASE_LATEST/"
       release-cli create \
         --name "Veskald Execution Bridge $CI_COMMIT_TAG" \
         --tag-name "$CI_COMMIT_TAG" \
-        --description "Desktop binaries for Linux, macOS, and Windows. Docker image: \`$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG\`." \
-        --assets-link "{\"name\":\"Linux — tar.gz (preserves +x)\",\"url\":\"$BASE/$LINUX_TAR\",\"link_type\":\"package\"}" \
-        --assets-link "{\"name\":\"Linux — installer bundle\",\"url\":\"$BASE/$LINUX_INSTALLER\",\"link_type\":\"package\"}" \
-        --assets-link "{\"name\":\"macOS (arm64) — .app.tar.gz\",\"url\":\"$BASE/$MACOS_TAR\",\"link_type\":\"package\"}" \
-        --assets-link "{\"name\":\"Windows — zip\",\"url\":\"$BASE/$WINDOWS_ZIP\",\"link_type\":\"package\"}" \
-        --assets-link "{\"name\":\"SHA-256 — Linux tar.gz\",\"url\":\"$BASE/$LINUX_TAR.sha256\",\"link_type\":\"other\"}" \
-        --assets-link "{\"name\":\"SHA-256 — Linux installer\",\"url\":\"$BASE/$LINUX_INSTALLER.sha256\",\"link_type\":\"other\"}" \
-        --assets-link "{\"name\":\"SHA-256 — macOS\",\"url\":\"$BASE/$MACOS_TAR.sha256\",\"link_type\":\"other\"}" \
-        --assets-link "{\"name\":\"SHA-256 — Windows\",\"url\":\"$BASE/$WINDOWS_ZIP.sha256\",\"link_type\":\"other\"}"
+        --description "Desktop binaries for Linux, macOS, and Windows. Docker image: \`$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG\`. Links marked $CI_COMMIT_TAG are immutable snapshots of this release (an OS not rebuilt this cycle may 404 — use latest); links marked latest always serve the newest deployed build per OS." \
+        --assets-link "{\"name\":\"Linux — tar.gz (preserves +x) — $CI_COMMIT_TAG\",\"url\":\"$BASE_TAG/$LINUX_TAR_V\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"Linux — tar.gz (preserves +x) — latest\",\"url\":\"$BASE_LATEST/$LINUX_TAR\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"Linux — installer bundle — $CI_COMMIT_TAG\",\"url\":\"$BASE_TAG/$LINUX_INSTALLER_V\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"Linux — installer bundle — latest\",\"url\":\"$BASE_LATEST/$LINUX_INSTALLER\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"macOS (arm64) — .app.tar.gz — $CI_COMMIT_TAG\",\"url\":\"$BASE_TAG/$MACOS_TAR_V\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"macOS (arm64) — .app.tar.gz — latest\",\"url\":\"$BASE_LATEST/$MACOS_TAR\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"Windows — zip — $CI_COMMIT_TAG\",\"url\":\"$BASE_TAG/$WINDOWS_ZIP_V\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"Windows — zip — latest\",\"url\":\"$BASE_LATEST/$WINDOWS_ZIP\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"SHA-256 — Linux tar.gz — $CI_COMMIT_TAG\",\"url\":\"$BASE_TAG/$LINUX_TAR_V.sha256\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"SHA-256 — Linux tar.gz — latest\",\"url\":\"$BASE_LATEST/$LINUX_TAR.sha256\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"SHA-256 — Linux installer — $CI_COMMIT_TAG\",\"url\":\"$BASE_TAG/$LINUX_INSTALLER_V.sha256\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"SHA-256 — Linux installer — latest\",\"url\":\"$BASE_LATEST/$LINUX_INSTALLER.sha256\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"SHA-256 — macOS — $CI_COMMIT_TAG\",\"url\":\"$BASE_TAG/$MACOS_TAR_V.sha256\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"SHA-256 — macOS — latest\",\"url\":\"$BASE_LATEST/$MACOS_TAR.sha256\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"SHA-256 — Windows — $CI_COMMIT_TAG\",\"url\":\"$BASE_TAG/$WINDOWS_ZIP_V.sha256\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"SHA-256 — Windows — latest\",\"url\":\"$BASE_LATEST/$WINDOWS_ZIP.sha256\",\"link_type\":\"other\"}"

@@ -85,11 +85,37 @@ class VeskaldBybit(BaseTrader):
 
     @staticmethod
     def _position_idx(direction: str, position_mode: PositionMode) -> int:
-        """0 для one-way; 1 для Buy hedge; 2 для Sell hedge."""
+        """0 for one-way; 1 for Buy hedge; 2 for Sell hedge."""
         if position_mode == "ONE_WAY":
             return 0
         return 1 if direction.upper() == "LONG" else 2
 
+
+    def set_position_mode(self, mode: PositionMode) -> bool:
+        # Bybit switches per settle coin; the bridge trades USDT perps only.
+        try:
+            self.client.switch_position_mode(
+                category=self.CATEGORY,
+                coin="USDT",
+                mode=3 if mode == "HEDGE" else 0,
+            )
+        except InvalidRequestError as e:
+            if "not modified" in str(e).lower():
+                self._position_mode_cache = None
+                return True
+            self.logger.error(
+                f"Bybit switch_position_mode rejected: {e}",
+                extra={"broker": self.BROKER_NAME},
+            )
+            return False
+        except Exception as e:
+            self.logger.error(
+                f"Bybit switch_position_mode failed: {e}",
+                extra={"broker": self.BROKER_NAME},
+            )
+            return False
+        self._position_mode_cache = None
+        return True
 
     def get_position_mode(self) -> Optional[PositionMode]:
         if self._position_mode_cache is not None:
@@ -140,8 +166,8 @@ class VeskaldBybit(BaseTrader):
             if size == 0.0:
                 continue
             if position_mode == "HEDGE":
-                return True  # idx уже определяет сторону
-            # ONE_WAY: side в строке = направление позиции
+                return True  # idx already identifies the side
+            # ONE_WAY: row side = position direction
             row_side = str(r.get("side", "")).upper()
             if direction.upper() == "LONG" and row_side == "BUY":
                 return True
@@ -173,7 +199,7 @@ class VeskaldBybit(BaseTrader):
             if size <= 0:
                 continue
             row_side = str(r.get("side", "")).upper()
-            # В ONE_WAY одна строка с idx=0 — направление берём из side
+            # ONE_WAY: single row with idx=0 — direction comes from side
             if position_mode == "ONE_WAY":
                 if direction.upper() == "LONG" and row_side != "BUY":
                     continue
@@ -385,7 +411,7 @@ class VeskaldBybit(BaseTrader):
         for attempt in range(retries + 1):
             try:
                 resp = fn(**params)
-                # pybit возвращает dict с retCode
+                # pybit returns a dict with retCode
                 if isinstance(resp, dict):
                     code = resp.get("retCode")
                     if code == 0:

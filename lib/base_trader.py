@@ -59,6 +59,10 @@ class BaseTrader(ABC):
         return "SELL" if direction.upper() == "LONG" else "BUY"
 
     @staticmethod
+    def opposite_direction(direction: str) -> str:
+        return "SHORT" if direction.upper() == "LONG" else "LONG"
+
+    @staticmethod
     def round_to_step(value: float, step: float, direction: str) -> float:
 
         if step <= 0:
@@ -72,10 +76,10 @@ class BaseTrader(ABC):
     def execute_action(self) -> Optional[Any]:
         action = self.action_data.get("action")
         symbol = self.action_data.get("symbol")
+        # The full payload is already logged as raw_data on receipt.
         self.logger.info(
             f"[{self.BROKER_NAME}] Received command: {action}",
-            extra={"action_data": self.action_data, "symbol": symbol,
-                   "broker": self.BROKER_NAME},
+            extra={"symbol": symbol, "broker": self.BROKER_NAME},
         )
         try:
             if action == "OPEN_POSITION":
@@ -143,6 +147,18 @@ class BaseTrader(ABC):
             )
             return None
 
+        # In one-way mode an opposite-direction order would reduce or flip
+        # the other strategy's position instead of opening a new one.
+        if position_mode == "ONE_WAY" and self.has_open_position(
+                symbol, self.opposite_direction(direction)):
+            self.logger.warning(
+                f"Blocked {direction} open on {symbol}: the opposite position "
+                "is already open and the account is in one-way mode. Running "
+                "long and short strategies on one asset needs hedge mode — "
+                "switch it in the desktop app Settings or on the exchange.",
+                extra={"symbol": symbol, "broker": self.BROKER_NAME},
+            )
+            return None
 
         self.set_isolated_margin(symbol)
         self.set_leverage(symbol, int(position_data["leverage"]))
@@ -166,7 +182,7 @@ class BaseTrader(ABC):
                 extra={"symbol": symbol, "broker": self.BROKER_NAME},
             )
 
-        # SL — критичный шаг. При неудаче закрываем позицию.
+        # SL is critical — close the position if it cannot be placed.
         sl_id = self.set_stop_loss_price(
             symbol, float(position_data["sl"]), direction, position_mode
         )
@@ -261,6 +277,15 @@ class BaseTrader(ABC):
             return
         self.market_close(symbol, direction, close_qty, position_mode)
 
+
+    def set_position_mode(self, mode: PositionMode) -> bool:
+        """Switches the account's position mode. False when unsupported."""
+        self.logger.warning(
+            f"{self.BROKER_NAME} does not support switching position mode "
+            "via API",
+            extra={"broker": self.BROKER_NAME},
+        )
+        return False
 
     @abstractmethod
     def get_position_mode(self) -> Optional[PositionMode]: ...

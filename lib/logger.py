@@ -22,8 +22,39 @@ _STANDARD_RECORD_KEYS = {
 }
 
 
+# Commands carry credentials (e.g. the KuCoin broker key), and log files and
+# Graylog are shared far more widely than the host itself — mask any field
+# that looks like a secret before it reaches a sink.
+_SECRET_NAME_HINTS = ("secret", "passphrase", "password", "token", "key")
+_MASK = "***"
+_MAX_MASK_DEPTH = 6
+
+
+def _is_secret_name(name: Any) -> bool:
+    lowered = str(name).lower()
+    return any(hint in lowered for hint in _SECRET_NAME_HINTS)
+
+
+def _mask_secrets(value: Any, depth: int = 0) -> Any:
+    """Copies `value` with secret-looking fields masked.
+
+    Returns new containers so the caller's command dict — which the traders
+    still need intact to sign requests — is never touched.
+    """
+    if depth >= _MAX_MASK_DEPTH:
+        return value
+    if isinstance(value, dict):
+        return {
+            k: _MASK if _is_secret_name(k) else _mask_secrets(v, depth + 1)
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_mask_secrets(v, depth + 1) for v in value]
+    return value
+
+
 class ContextFilter(logging.Filter):
-    """Инжектит контекст в каждый LogRecord."""
+    """Injects context into every LogRecord and masks secrets in its extras."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.ctx = DEFAULT_CTX
@@ -32,11 +63,22 @@ class ContextFilter(logging.Filter):
         record.timestamp = int(
             datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000
         )
-        record.extra = {
-            k: v for k, v in record.__dict__.items()
-            if k not in _STANDARD_RECORD_KEYS
-        }
+        extra = {}
+        for key, value in list(record.__dict__.items()):
+            if key in _STANDARD_RECORD_KEYS:
+                continue
+            safe = _MASK if _is_secret_name(key) else _mask_secrets(value)
+            # Write back: graypy's extra_fields reads record attributes
+            # directly rather than going through record.extra.
+            setattr(record, key, safe)
+            extra[key] = safe
+        record.extra = extra
         return True
+
+
+# Shared instance: attached both per-logger (runs before any handler, whatever
+# order handlers were added in) and per-handler. Filtering is idempotent.
+_CTX_FILTER = ContextFilter()
 
 
 def _format_extra(extra: Dict[str, Any], indent: int = 0) -> str:
@@ -64,13 +106,18 @@ def _format_extra(extra: Dict[str, Any], indent: int = 0) -> str:
 
 
 class ReadableFormatter(logging.Formatter):
+    """Appends the extras block to its own output only.
 
+    Must not mutate the record: other handlers (console, GUI, Graylog)
+    format the same record and would inherit the appended block.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
         extra = getattr(record, "extra", None)
-        if extra and isinstance(extra, dict) and extra:
-            record.msg = f"{record.msg}\n{_format_extra(extra)}"
-        return super().format(record)
+        if isinstance(extra, dict) and extra:
+            formatted += _format_extra(extra)
+        return formatted
 
 
 
@@ -95,7 +142,7 @@ def _configure_root_once() -> None:
         root.removeHandler(h)
 
 
-    ctx_filter = ContextFilter()
+    ctx_filter = _CTX_FILTER
 
 
     log_file = os.path.join(LOGS_DIR, "veskald_bridge.log")
@@ -132,7 +179,7 @@ def _configure_root_once() -> None:
     if not getattr(sys, "frozen", False) and not in_gui:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(logging.Formatter(
+        console_handler.setFormatter(ReadableFormatter(
             "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
         ))
         root.addHandler(console_handler)
@@ -146,6 +193,10 @@ def get_logger(name: str) -> logging.Logger:
     full_name = name if name.startswith("veskald_bridge") else f"veskald_bridge.{name}"
     logger = logging.getLogger(full_name)
     logger.setLevel(logging.DEBUG)
+    # Masking must run before every handler, including ones attached elsewhere
+    # (the desktop app's Qt viewer). A logger-level filter runs first; addFilter
+    # is a no-op when the instance is already there.
+    logger.addFilter(_CTX_FILTER)
 
     return logger
 

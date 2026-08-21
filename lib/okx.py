@@ -147,8 +147,8 @@ class VeskaldOkx(BaseTrader):
         if ct_val <= 0:
             return str(coin_qty)
         contracts = Decimal(str(coin_qty)) / Decimal(str(ct_val))
-        # OKX ожидает целое число контрактов как строку
-        # Округляем вниз чтобы не превысить запрошенное количество
+        # OKX expects a whole number of contracts as a string.
+        # Round down so we never exceed the requested quantity.
         contracts_int = int(contracts)
         return str(max(contracts_int, 0))
 
@@ -157,6 +157,27 @@ class VeskaldOkx(BaseTrader):
         return float(Decimal(str(contracts)) * Decimal(str(ct_val)))
 
 
+
+    def set_position_mode(self, mode: PositionMode) -> bool:
+        pos_mode = "long_short_mode" if mode == "HEDGE" else "net_mode"
+        try:
+            resp = self.account.set_position_mode(posMode=pos_mode)
+        except Exception as e:
+            self.logger.error(
+                f"OKX set_position_mode failed: {e}",
+                extra={"broker": self.BROKER_NAME},
+            )
+            return False
+        code = str(resp.get("code", "")) if isinstance(resp, dict) else ""
+        msg = str(resp.get("msg", "")) if isinstance(resp, dict) else str(resp)
+        if code == "0" or "not modified" in msg.lower():
+            self._position_mode_cache = None
+            return True
+        self.logger.error(
+            f"OKX set_position_mode rejected: [{code}] {msg}",
+            extra={"broker": self.BROKER_NAME},
+        )
+        return False
 
     def get_position_mode(self) -> Optional[PositionMode]:
         if self._position_mode_cache is not None:
@@ -204,7 +225,7 @@ class VeskaldOkx(BaseTrader):
                         and pos > 0):
                     return True
             else:
-                # net mode — pos подписанный (положительный = long)
+                # net mode — pos is signed (positive = long)
                 if direction.upper() == "LONG" and pos > 0:
                     return True
                 if direction.upper() == "SHORT" and pos < 0:
@@ -258,8 +279,8 @@ class VeskaldOkx(BaseTrader):
         position_mode = self.get_position_mode()
         mgn_mode = self._td_mode()  # 'isolated' | 'cross'
 
-        # Для hedge isolated нужно поставить leverage и для long и для short.
-        # Для cross или для net mode — достаточно одного вызова.
+        # Hedge isolated needs leverage set for both long and short.
+        # Cross or net mode needs a single call.
         results: List[bool] = []
         if position_mode == "HEDGE" and mgn_mode == "isolated":
             for ps in ("long", "short"):
@@ -315,7 +336,7 @@ class VeskaldOkx(BaseTrader):
         return self._place_conditional(
             symbol=symbol, direction=direction, position_mode=position_mode,
             sl_trigger_price=float(stop_loss_price),
-            close_fraction=True,  # закрыть всю позицию
+            close_fraction=True,  # close the whole position
         )
 
     def place_take_profits(

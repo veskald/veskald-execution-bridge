@@ -59,6 +59,14 @@ SECTIONS = [
             "COINBASE_INTX_PORTFOLIO_UUID",
         ],
     ),
+    (
+        "KuCoin Futures",
+        [
+            "KUCOIN_API_KEY",
+            "KUCOIN_API_SECRET",
+            "KUCOIN_API_PASSPHRASE",
+        ],
+    ),
 ]
 
 

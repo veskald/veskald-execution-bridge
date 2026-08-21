@@ -28,6 +28,7 @@ project_modules = [
     "lib.bybit",
     "lib.coinbase",
     "lib.kraken",
+    "lib.kucoin",
     "lib.okx",
     "lib.logger",
     "lib.ssl_bootstrap",

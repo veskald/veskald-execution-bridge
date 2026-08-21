@@ -1,10 +1,11 @@
 """Modal Qt dialog for entering Hub URL, machine token, and exchange API keys."""
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
@@ -49,11 +51,15 @@ class ExchangeSpec:
     fields: List[FieldSpec]
     bools: List[BoolSpec]
     docs: str = ""
+    broker: str = ""
+    mode_switch: bool = False
 
 
 EXCHANGES: List[ExchangeSpec] = [
     ExchangeSpec(
         label="Binance",
+        broker="binance",
+        mode_switch=True,
         fields=[
             FieldSpec("BINANCE_API_KEY", "API Key"),
             FieldSpec("BINANCE_API_SECRET", "API Secret", secret=True),
@@ -63,6 +69,8 @@ EXCHANGES: List[ExchangeSpec] = [
     ),
     ExchangeSpec(
         label="Bybit",
+        broker="bybit",
+        mode_switch=True,
         fields=[
             FieldSpec("BYBIT_API_KEY", "API Key"),
             FieldSpec("BYBIT_API_SECRET", "API Secret", secret=True),
@@ -72,6 +80,7 @@ EXCHANGES: List[ExchangeSpec] = [
     ),
     ExchangeSpec(
         label="Kraken",
+        broker="kraken",
         fields=[
             FieldSpec("KRAKEN_API_KEY", "API Key"),
             FieldSpec("KRAKEN_API_SECRET", "API Secret", secret=True),
@@ -81,6 +90,8 @@ EXCHANGES: List[ExchangeSpec] = [
     ),
     ExchangeSpec(
         label="OKX",
+        broker="okx",
+        mode_switch=True,
         fields=[
             FieldSpec("OKX_API_KEY", "API Key"),
             FieldSpec("OKX_API_SECRET", "API Secret", secret=True),
@@ -94,6 +105,7 @@ EXCHANGES: List[ExchangeSpec] = [
     ),
     ExchangeSpec(
         label="Coinbase",
+        broker="coinbase",
         fields=[
             FieldSpec("COINBASE_API_KEY", "API Key", placeholder="organizations/.../apiKeys/..."),
             FieldSpec(
@@ -110,6 +122,18 @@ EXCHANGES: List[ExchangeSpec] = [
         ],
         bools=[],
         docs="Advanced Trade / INTX. Paste the full PEM private key.",
+    ),
+    ExchangeSpec(
+        label="KuCoin",
+        broker="kucoin",
+        mode_switch=True,
+        fields=[
+            FieldSpec("KUCOIN_API_KEY", "API Key"),
+            FieldSpec("KUCOIN_API_SECRET", "API Secret", secret=True),
+            FieldSpec("KUCOIN_API_PASSPHRASE", "Passphrase", secret=True),
+        ],
+        bools=[],
+        docs="KuCoin Futures API key with Futures trade permission.",
     ),
 ]
 
@@ -137,6 +161,11 @@ def _make_secret_field(placeholder: str = "") -> tuple[QWidget, QLineEdit, QPush
     return container, line, reveal
 
 
+class _ModeSwitchSignals(QObject):
+    # Emitted from a worker thread; queued back onto the GUI thread by Qt.
+    done = Signal(str, str, bool, str)  # exchange label, mode, ok, detail
+
+
 class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -144,6 +173,9 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(720, 580)
         self._fields: Dict[str, QLineEdit | QPlainTextEdit] = {}
         self._bools: Dict[str, QCheckBox] = {}
+        self._mode_buttons: Dict[str, List[QPushButton]] = {}
+        self._mode_signals = _ModeSwitchSignals()
+        self._mode_signals.done.connect(self._on_mode_switched)
 
         existing = read_env()
         self._build_ui(existing)
@@ -236,8 +268,77 @@ class SettingsDialog(QDialog):
             layout.addWidget(cb)
             self._bools[spec.key] = cb
 
+        if ex.mode_switch:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.addWidget(QLabel("Position mode:"))
+            btn_one = QPushButton("One-way")
+            btn_hedge = QPushButton("Hedge")
+            btn_one.clicked.connect(
+                lambda _=False, e=ex: self._switch_mode(e, "ONE_WAY"))
+            btn_hedge.clicked.connect(
+                lambda _=False, e=ex: self._switch_mode(e, "HEDGE"))
+            row.addWidget(btn_one)
+            row.addWidget(btn_hedge)
+            row.addStretch(1)
+            layout.addLayout(row)
+            self._mode_buttons[ex.label] = [btn_one, btn_hedge]
+
+            mode_note = QLabel(
+                "Hedge mode is required to run long and short strategies on "
+                "the same asset. Applies on the exchange immediately using "
+                "the saved keys; exchanges reject the switch while positions "
+                "or orders are open."
+            )
+            mode_note.setWordWrap(True)
+            layout.addWidget(mode_note)
+
         layout.addStretch(1)
         return page
+
+    # ---- Position mode switching ----------------------------------------
+
+    def _switch_mode(self, ex: ExchangeSpec, mode: str) -> None:
+        for b in self._mode_buttons.get(ex.label, []):
+            b.setEnabled(False)
+        threading.Thread(
+            target=self._switch_mode_worker, args=(ex, mode), daemon=True,
+        ).start()
+
+    def _switch_mode_worker(self, ex: ExchangeSpec, mode: str) -> None:
+        try:
+            from config import has_credentials
+            if not has_credentials(ex.broker):
+                self._mode_signals.done.emit(
+                    ex.label, mode, False,
+                    "No saved API keys — save settings and restart the app "
+                    "first.",
+                )
+                return
+            from lib.trader_factory import build_trader
+            trader = build_trader({"broker": ex.broker})
+            ok = trader.set_position_mode(mode)
+            detail = "" if ok else (
+                "Exchange refused the switch — check the Logs tab. Open "
+                "positions or orders usually block it."
+            )
+            self._mode_signals.done.emit(ex.label, mode, ok, detail)
+        except Exception as exc:  # noqa: BLE001
+            self._mode_signals.done.emit(ex.label, mode, False, str(exc))
+
+    def _on_mode_switched(
+        self, label: str, mode: str, ok: bool, detail: str
+    ) -> None:
+        for b in self._mode_buttons.get(label, []):
+            b.setEnabled(True)
+        pretty = "hedge" if mode == "HEDGE" else "one-way"
+        if ok:
+            QMessageBox.information(
+                self, "Position mode", f"{label}: switched to {pretty} mode.")
+        else:
+            QMessageBox.warning(
+                self, "Position mode",
+                f"{label}: switch to {pretty} mode failed. {detail}")
 
     # ---- Save ------------------------------------------------------------
 

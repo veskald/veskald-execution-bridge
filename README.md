@@ -60,6 +60,7 @@ This separation is non-custodial by design. The strategy logic stays with us so 
 | Kraken   | Stable          | Futures            | Sandbox       |
 | OKX      | In development  | Swap (Perpetual)   | Demo trading  |
 | Coinbase | In development  | INTX Perpetuals    | —             |
+| KuCoin   | In development  | USDT Perpetual     | —             |
 
 Need another exchange (Bitget, BingX, Hyperliquid, dYdX, …)? Open an issue — new adapters typically ship within 1–3 weeks.
 
@@ -239,6 +240,17 @@ All variables go in your `.env` file.
 | `COINBASE_API_SECRET`            | API secret.                |
 | `COINBASE_INTX_PORTFOLIO_UUID`   | INTX portfolio UUID.       |
 
+### KuCoin Futures
+
+| Variable                 | Description                              |
+| ---                      | ---                                      |
+| `KUCOIN_API_KEY`         | API key with Futures trade permission.   |
+| `KUCOIN_API_SECRET`      | API secret.                              |
+| `KUCOIN_API_PASSPHRASE`  | API passphrase (required by KuCoin).     |
+
+The broker (partner) tag and key arrive with each signal; hardcoded fallbacks
+live in `lib/kucoin.py`.
+
 ## Verifying it works
 
 Check the container is running:
@@ -349,7 +361,7 @@ veskald-execution-bridge/
 │   ├── symbols.py                     # symbol mapping between Veskald and exchanges
 │   ├── userdir.py                     # OS-specific config / log dirs
 │   ├── logger.py
-│   ├── binance.py / bybit.py / coinbase.py / kraken.py / okx.py
+│   ├── binance.py / bybit.py / coinbase.py / kraken.py / kucoin.py / okx.py
 ├── .gitlab-ci.yml                     # CI: Docker multi-arch build & push to GitLab Container Registry
 └── .gitlab/merge_request_templates/Default.md   # MR template + format reminder
 ```

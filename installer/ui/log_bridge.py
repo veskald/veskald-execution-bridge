@@ -5,6 +5,8 @@ import logging
 
 from PySide6.QtCore import QObject, Signal
 
+from lib.logger import ReadableFormatter
+
 
 class LogEmitter(QObject):
     message = Signal(str, str)  # level, formatted line
@@ -22,7 +24,7 @@ class QtLogHandler(logging.Handler):
         self.setLevel(logging.DEBUG)
         self.emitter = LogEmitter()
         self.setFormatter(
-            logging.Formatter(
+            ReadableFormatter(
                 "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
                 datefmt="%H:%M:%S",
             )

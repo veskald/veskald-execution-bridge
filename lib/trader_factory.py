@@ -1,9 +1,9 @@
 """
-Фабрика трейдеров. Команда из сокета содержит поле "broker":
-  "binance" | "bybit" | "kraken" | "okx" | "coinbase"
+Trader factory. The socket command carries a "broker" field:
+  "binance" | "bybit" | "kraken" | "okx" | "coinbase" | "kucoin"
 
-SDK конкретных бирж импортируются ленниво: если ключи/SDK одной биржи
-отсутствуют, остальные продолжают работать.
+Exchange SDKs are imported lazily: when one exchange's keys/SDK are
+missing, the others keep working.
 """
 from typing import Any, Dict
 
@@ -12,7 +12,7 @@ from .logger import get_logger
 
 _logger = get_logger("TraderFactory")
 
-_BROKERS = ("binance", "bybit", "kraken", "okx", "coinbase")
+_BROKERS = ("binance", "bybit", "kraken", "okx", "coinbase", "kucoin")
 SUPPORTED_BROKERS = _BROKERS
 
 
@@ -32,6 +32,9 @@ def _normalize_broker(value: Any) -> str:
         "coinbase_advanced": "coinbase",
         "cb-advanced": "coinbase",
         "cbadvanced": "coinbase",
+        "kucoin-futures": "kucoin",
+        "kucoinfutures": "kucoin",
+        "kumex": "kucoin",
     }
     return aliases.get(s, s)
 
@@ -53,6 +56,9 @@ def build_trader(data: Dict[str, Any]) -> BaseTrader:
     if broker == "coinbase":
         from lib.coinbase import VeskaldCoinbase
         return VeskaldCoinbase(data)
+    if broker == "kucoin":
+        from lib.kucoin import VeskaldKucoin
+        return VeskaldKucoin(data)
     raise ValueError(
         f"Unknown broker: {broker!r}. Expected one of: {_BROKERS}"
     )

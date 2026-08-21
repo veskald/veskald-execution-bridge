@@ -99,7 +99,7 @@ class VeskaldKraken(BaseTrader):
         positions = self._get_open_positions()
         if positions is None:
             return False
-        ex_sym = self._ex_symbol(symbol).lower()  # Kraken возвращает lowercase
+        ex_sym = self._ex_symbol(symbol).lower()  # Kraken returns lowercase symbols
         for p in positions:
             if str(p.get("symbol", "")).lower() != ex_sym:
                 continue

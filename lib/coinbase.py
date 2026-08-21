@@ -255,7 +255,7 @@ class VeskaldCoinbase(BaseTrader):
                 }
             },
         }
-        # retries=0 — идемпотентность через client_order_id
+        # retries=0 — idempotency via client_order_id
         resp = self._safe_call(self.client.create_order, retries=0, **params)
         d = _to_dict(resp)
         if not d.get("success"):
@@ -411,7 +411,6 @@ class VeskaldCoinbase(BaseTrader):
         product_id = self._ex_symbol(symbol)
         close_side = self._close_side(direction)
 
-        # Получаем висящие ордера по продукту
         resp = self._safe_call(
             self.client.list_orders,
             product_id=product_id,
@@ -421,7 +420,7 @@ class VeskaldCoinbase(BaseTrader):
         orders = d.get("orders") or []
 
         is_long = direction.upper() == "LONG"
-        # SL — STOP_DOWN для LONG, STOP_UP для SHORT
+        # SL: STOP_DOWN for LONG, STOP_UP for SHORT
         sl_dir = "STOP_DIRECTION_STOP_DOWN" if is_long else "STOP_DIRECTION_STOP_UP"
         tp_dir = "STOP_DIRECTION_STOP_UP" if is_long else "STOP_DIRECTION_STOP_DOWN"
 
@@ -473,7 +472,7 @@ class VeskaldCoinbase(BaseTrader):
             try:
                 resp = fn(**params)
                 d = _to_dict(resp)
-                # create_order формат: {"success": bool, "error_response": {...}}
+                # create_order response: {"success": bool, "error_response": {...}}
                 if "success" in d and not d.get("success"):
                     err = _to_dict(d.get("error_response"))
                     text = (
@@ -499,7 +498,7 @@ class VeskaldCoinbase(BaseTrader):
                     )
                     if kind == "non_retryable":
                         return None, text
-                    # retryable / unknown — продолжаем ретраить
+                    # retryable / unknown — keep retrying
                 else:
                     return resp, None
             except Exception as e:

@@ -26,6 +26,12 @@ sudo apt install -y python3.11 python3.11-venv python3-pip \
 
 `libfuse2` is required by AppImage runtime; `libxcb-cursor0` by Qt 6.5+.
 
+Any Python 3.9–3.12 works — `build-local.sh` picks the best one on PATH
+(prefers 3.11) and rebuilds `.build-venv` automatically if the system Python
+changed underneath it. Newer Pythons (3.13+) are rejected: the pinned
+PySide6/pyinstaller don't support them. Use `PYTHON=/path/to/python` to
+override the choice.
+
 ### Build
 
 ```bash

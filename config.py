@@ -47,6 +47,12 @@ COINBASE_API_SECRET = os.getenv("COINBASE_API_SECRET")
 
 COINBASE_INTX_PORTFOLIO_UUID = os.getenv("COINBASE_INTX_PORTFOLIO_UUID")
 
+# KuCoin Futures. The broker (partner) tag and key arrive with each signal;
+# lib/kucoin.py holds the hardcoded fallbacks.
+KUCOIN_API_KEY = os.getenv("KUCOIN_API_KEY")
+KUCOIN_API_SECRET = os.getenv("KUCOIN_API_SECRET")
+KUCOIN_API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
+
 
 ID_FILE = os.path.join(_APP_DIR, ".unique_id")
 ENV_UNIQUE_ID = os.getenv("UNIQUE_ID")
@@ -77,4 +83,8 @@ def has_credentials(broker: str) -> bool:
         return bool(OKX_API_KEY and OKX_API_SECRET and OKX_API_PASSPHRASE)
     if b == "coinbase":
         return bool(COINBASE_API_KEY and COINBASE_API_SECRET)
+    if b == "kucoin":
+        return bool(
+            KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE
+        )
     return False

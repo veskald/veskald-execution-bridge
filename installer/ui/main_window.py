@@ -38,6 +38,7 @@ BROKERS_DISPLAY = [
     ("kraken",   "Kraken"),
     ("okx",      "OKX"),
     ("coinbase", "Coinbase"),
+    ("kucoin",   "KuCoin"),
 ]
 
 

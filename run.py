@@ -1,3 +1,4 @@
+import signal
 import threading
 import time
 from queue import Queue
@@ -14,9 +15,10 @@ from lib.logger import get_logger
 from lib.trader_factory import build_trader, SUPPORTED_BROKERS
 
 logger = get_logger("Main")
-sio = socketio.Client(
-    reconnection=True, reconnection_attempts=0, logger=False, engineio_logger=False
-)
+# main() runs its own reconnect loop with backoff. The library's auto
+# reconnect would race it and double every connection attempt — that hammering
+# is what gets the machine token temporarily blocked by the hub.
+sio = socketio.Client(reconnection=False, logger=False, engineio_logger=False)
 
 _command_queue: "Queue[dict]" = Queue()
 _stop_event = threading.Event()
@@ -38,6 +40,30 @@ def request_stop() -> None:
 def reset_stop() -> None:
     """Clear the stop flag so main() can be re-entered after a previous stop."""
     _stop_event.clear()
+
+
+def install_signal_handlers() -> None:
+    sigs = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):  # Windows console close
+        sigs.append(signal.SIGBREAK)
+
+    def _handle(signum, frame) -> None:
+        for s in sigs:
+            try:
+                signal.signal(s, signal.SIG_DFL)
+            except (ValueError, OSError):
+                pass
+        try:
+            logger.info(f"Got {signal.Signals(signum).name} — shutting down")
+        except Exception:
+            pass
+        request_stop()
+
+    for s in sigs:
+        try:
+            signal.signal(s, _handle)
+        except (ValueError, OSError):
+            pass
 
 
 def _worker_loop() -> None:
@@ -109,16 +135,16 @@ def on_command_run(data) -> None:
     _command_queue.put(data)
 
 
-@sio.event
-def connect_error(data) -> None:
-    logger.error("connect_error", extra={"data": data})
+# The hub rejects the connection on the /machines namespace, so the handler
+# must be bound to it — a bare handler would sit on "/" and never fire.
+@sio.on("connect_error", namespace="/machines")
+def connect_error(*args) -> None:
+    reason = args[0] if args else "no reason given by hub"
+    logger.error(f"Hub rejected /machines connection: {reason!r}",
+                 extra={"data": args})
 
 
 def _check_one_broker(broker: str) -> Dict[str, str]:
-    """
-    Возвращает dict с результатом проверки одной биржи:
-      {"broker": ..., "status": "ok"|"skip"|"error", "detail": "..."}
-    """
     if not has_credentials(broker):
         return {"broker": broker, "status": "skip",
                 "detail": "no credentials in env"}
@@ -135,10 +161,7 @@ def _check_one_broker(broker: str) -> Dict[str, str]:
 
 
 def _startup_check() -> None:
-    """Проверяет каждую биржу, для которой в env есть ключи."""
-    logger.info("=" * 50)
     logger.info("Startup: checking API connectivity for all brokers")
-    logger.info("=" * 50)
 
     results = []
     for broker in SUPPORTED_BROKERS:
@@ -146,17 +169,18 @@ def _startup_check() -> None:
         results.append(result)
         if result["status"] == "ok":
             logger.info(f"[{broker:8s}] OK — {result['detail']}")
-        elif result["status"] == "skip":
-            logger.info(f"[{broker:8s}] skipped — {result['detail']}")
-        else:
+        elif result["status"] == "error":
             logger.error(f"[{broker:8s}] FAIL — {result['detail']}")
+
+    skipped = [r["broker"] for r in results if r["status"] == "skip"]
+    if skipped:
+        logger.info(f"Skipped (no credentials in env): {', '.join(skipped)}")
 
     ok_count = sum(1 for r in results if r["status"] == "ok")
     fail_count = sum(1 for r in results if r["status"] == "error")
     skip_count = sum(1 for r in results if r["status"] == "skip")
     logger.info(
-        f"Brokers: {ok_count} active, {fail_count} failing, {skip_count} skipped",
-        extra={"results": results},
+        f"Brokers: {ok_count} active, {fail_count} failing, {skip_count} skipped"
     )
 
     if ok_count == 0:
@@ -185,20 +209,27 @@ def main(exit_on_missing_config: bool = True) -> None:
     backoff = 5
     while not _stop_event.is_set():
         try:
-            logger.info(f"Connecting to {HUB_URL}...")
-            sio.connect(
-                HUB_URL,
-                namespaces=["/machines"],
-                auth={"token": MACHINE_TOKEN},
-                transports=["websocket"],
-            )
-            backoff = 5
+            if not sio.connected:
+                logger.info(f"Connecting to {HUB_URL}...")
+                sio.connect(
+                    HUB_URL,
+                    namespaces=["/machines"],
+                    auth={"token": MACHINE_TOKEN},
+                    transports=["websocket"],
+                    wait_timeout=5,
+                )
+                backoff = 5
             sio.wait()
             if _stop_event.is_set():
                 break
         except Exception as e:
             if _stop_event.is_set():
                 break
+            try:
+                if sio.connected:
+                    sio.disconnect()
+            except Exception:
+                pass
             logger.error(
                 f"Connect error: {e!r} (backoff {backoff}s)",
                 extra={"error": repr(e), "backoff": backoff},
@@ -222,4 +253,8 @@ if __name__ == "__main__":
     print(f"       SET_UNIQUE_ID: {ENV_UNIQUE_ID}")
     print(f" GENERATED_UNIQUE_ID: {LOCAL_UNIQUE_ID}")
     print("==========================================")
-    main()
+    install_signal_handlers()
+    try:
+        main()
+    except KeyboardInterrupt:
+        request_stop()
