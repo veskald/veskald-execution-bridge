@@ -211,6 +211,7 @@ write_env() {
     "Kraken Futures:KRAKEN:KRAKEN_API_KEY:KRAKEN_API_SECRET:KRAKEN_SANDBOX=false"
     "OKX:OKX:OKX_API_KEY:OKX_API_SECRET:OKX_API_PASSPHRASE,OKX_DEMO=false,OKX_DEFAULT_ISOLATED=false"
     "Coinbase:COINBASE:COINBASE_API_KEY:COINBASE_API_SECRET:COINBASE_INTX_PORTFOLIO_UUID"
+    "KuCoin Futures:KUCOIN:KUCOIN_API_KEY:KUCOIN_API_SECRET:KUCOIN_API_PASSPHRASE"
   )
 
   for section in "${SECTIONS[@]}"; do
@@ -234,7 +235,7 @@ write_env() {
           fkey="$field"
           fdefault=""
         fi
-        # OKX passphrase is sensitive
+        # Passphrases (OKX, KuCoin) are sensitive
         if [[ "$fkey" == *PASSPHRASE* ]]; then
           KEYS[$fkey]="$(ask_secret "$fkey")"
         else

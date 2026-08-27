@@ -53,8 +53,8 @@ On the very first launch the app opens a **Settings** dialog automatically:
 - **Veskald tab** — Hub URL (default is correct) and **Machine token** (copy from
   your veskald.com dashboard, required).
 - **Per-exchange tabs** — paste API key + secret + any extra fields (passphrase
-  for OKX, INTX portfolio UUID for Coinbase). Leave a tab blank to skip that
-  exchange.
+  for OKX and KuCoin, INTX portfolio UUID for Coinbase). Leave a tab blank to
+  skip that exchange.
 
 Click **Save**. The app immediately starts connecting, runs health checks on
 every configured exchange, and the live log fills with output.
