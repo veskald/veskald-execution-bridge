@@ -10,6 +10,7 @@ _apply_ssl_bootstrap()
 
 import socketio
 
+import lib.base_trader
 from config import HUB_URL, MACHINE_TOKEN, has_credentials
 from lib.logger import get_logger
 from lib.trader_factory import build_trader, SUPPORTED_BROKERS
@@ -103,6 +104,8 @@ def _execute_command(data: dict) -> None:
 
 
 def _sweep_orphan_orders() -> None:
+    if not lib.base_trader.ORPHAN_CLEANUP_ENABLED:
+        return
     for broker in SUPPORTED_BROKERS:
         if not has_credentials(broker):
             continue

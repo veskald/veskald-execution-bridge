@@ -6,6 +6,10 @@ from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple
 
 from lib.logger import get_logger
 
+# Switched off for now: a position read lagging behind a fill would make a
+# live SL look orphaned and cancel it.
+ORPHAN_CLEANUP_ENABLED = False
+
 PositionMode = Literal["ONE_WAY", "HEDGE"]
 Direction = Literal["LONG", "SHORT"]
 
@@ -170,7 +174,8 @@ class BaseTrader(ABC):
             return None
 
         # A closed predecessor's leftover SL/TP would act on the new position.
-        self.cancel_orphan_orders()
+        if ORPHAN_CLEANUP_ENABLED:
+            self.cancel_orphan_orders()
 
         self.set_isolated_margin(symbol)
         self.set_leverage(symbol, int(position_data["leverage"]))

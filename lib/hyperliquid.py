@@ -32,6 +32,9 @@ _TRIGGER_KINDS = {"Stop": "sl", "Take Profit": "tp"}
 # Worst fill a triggered SL/TP accepts, as a fraction of its trigger price.
 _SLIPPAGE = 0.05
 
+# A read right after a fill can still miss the new position.
+_POSITION_REREAD_DELAY = 1.0
+
 
 def to_cloid(client_id: str) -> Cloid:
     prefix, _, hex16 = client_id.partition("-")
@@ -275,6 +278,13 @@ class VeskaldHyperliquid(BaseTrader):
         self, symbol: str, trigger_price: float, direction: str
     ) -> Optional[str]:
         row = self._position_for(symbol, direction)
+        if not row:
+            self.logger.warning(
+                f"Hyperliquid {symbol} {direction} position not visible, re-reading",
+                extra={"symbol": symbol, "broker": self.BROKER_NAME},
+            )
+            time.sleep(_POSITION_REREAD_DELAY)
+            row = self._position_for(symbol, direction)
         if not row:
             reason = "position state unreadable" if row is None else f"no {direction} position"
             self.logger.error(
