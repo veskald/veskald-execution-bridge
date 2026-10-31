@@ -290,13 +290,13 @@ The installer saves a copy of itself next to `.env`, in `/opt/veskald-execution-
 
 ```bash
 cd /opt/veskald-execution-bridge
-bash server-install.sh update                  # pull the latest image, restart container
+bash server-install.sh update                  # pull the latest image, recreate the container
 bash server-install.sh status                  # docker compose ps
 bash server-install.sh logs                    # tail -f the container logs
 bash server-install.sh restart
 bash server-install.sh stop
-bash server-install.sh configure hyperliquid   # add or change one exchange, keep the rest, restart
-bash server-install.sh reconfigure             # rerun the whole wizard; Enter keeps every current value
+bash server-install.sh configure hyperliquid   # add or change one exchange, keep the rest, pull + recreate
+bash server-install.sh reconfigure             # rerun the whole wizard (Enter keeps values), pull + recreate
 bash server-install.sh uninstall               # remove container + image + dir
 ```
 

@@ -128,6 +128,7 @@ ensure_prefix() {
 save_installer_to_prefix() {
   local prefix="$1"
   local target="$prefix/server-install.sh"
+  if [[ "$0" -ef "$target" ]]; then return; fi
   # `bash <(curl ...)` makes $0 a transient /dev/fd/* path we can't copy
   # from, so re-fetch the canonical URL in that case.
   if [[ "$0" == /dev/fd/* || ! -f "$0" ]]; then
@@ -374,6 +375,14 @@ compose_in() {
   ( cd "$prefix" && docker compose "$@" )
 }
 
+pull_and_recreate() {
+  local prefix="$1"
+  info "Pulling image $IMAGE"
+  compose_in "$prefix" pull
+  info "Recreating container"
+  compose_in "$prefix" up -d --force-recreate
+}
+
 # ---- actions --------------------------------------------------------------
 
 action_install() {
@@ -400,12 +409,7 @@ action_install() {
   fi
 
   write_compose "$prefix"
-
-  info "Pulling image $IMAGE"
-  compose_in "$prefix" pull
-
-  info "Starting container"
-  compose_in "$prefix" up -d --force-recreate
+  pull_and_recreate "$prefix"
 
   sleep 3
   if [[ -z "$(compose_in "$prefix" ps --status running --quiet)" ]]; then
@@ -434,10 +438,7 @@ action_update() {
   local prefix; prefix="$(resolve_prefix)"
   [[ -f "$prefix/docker-compose.yml" ]] || die "Not installed at $prefix. Run install first."
   save_installer_to_prefix "$prefix"
-  info "Pulling latest image"
-  compose_in "$prefix" pull
-  info "Restarting container"
-  compose_in "$prefix" up -d
+  pull_and_recreate "$prefix"
   c_green "  ✓ Updated."; echo
 }
 
@@ -472,8 +473,7 @@ action_reconfigure() {
   [[ -f "$prefix/docker-compose.yml" ]] || die "Not installed at $prefix. Run install first."
   save_installer_to_prefix "$prefix"
   write_env "$prefix"
-  info "Restarting container with new config"
-  compose_in "$prefix" up -d --force-recreate
+  pull_and_recreate "$prefix"
   c_green "  ✓ Reconfigured and restarted."; echo
 }
 
@@ -485,8 +485,7 @@ action_configure() {
   [[ -f "$prefix/docker-compose.yml" ]] || die "Not installed at $prefix. Run install first."
   save_installer_to_prefix "$prefix"
   write_env "$prefix" "$EXCHANGE"
-  info "Restarting container with new config"
-  compose_in "$prefix" up -d --force-recreate
+  pull_and_recreate "$prefix"
   c_green "  ✓ ${EXCHANGE,,} configured, container restarted."; echo
 }
 
