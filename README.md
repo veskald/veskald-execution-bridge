@@ -61,8 +61,9 @@ This separation is non-custodial by design. The strategy logic stays with us so 
 | OKX      | In development  | Swap (Perpetual)   | Demo trading  |
 | Coinbase | In development  | INTX Perpetuals    | —             |
 | KuCoin   | In development  | USDT Perpetual     | —             |
+| Hyperliquid | In development | Perpetuals      | Testnet       |
 
-Need another exchange (Bitget, BingX, Hyperliquid, dYdX, …)? Open an issue — new adapters typically ship within 1–3 weeks.
+Need another exchange (Bitget, BingX, dYdX, …)? Open an issue — new adapters typically ship within 1–3 weeks.
 
 ## Install
 
@@ -251,6 +252,16 @@ All variables go in your `.env` file.
 The broker (partner) tag and key arrive with each signal; hardcoded fallbacks
 live in `lib/kucoin.py`.
 
+### Hyperliquid
+
+| Variable                        | Description                                                        |
+| ---                             | ---                                                                |
+| `HYPERLIQUID_ACCOUNT_ADDRESS`   | Your main wallet address (`0x…`).                                  |
+| `HYPERLIQUID_PRIVATE_KEY`       | Private key of an API wallet (app.hyperliquid.xyz/API), not the main wallet. |
+| `HYPERLIQUID_TESTNET`           | `true` to trade on testnet.                                        |
+
+Hyperliquid accounts are one-way only; running long and short strategies on one asset is not possible there.
+
 ## Verifying it works
 
 Check the container is running:
@@ -361,7 +372,7 @@ veskald-execution-bridge/
 │   ├── symbols.py                     # symbol mapping between Veskald and exchanges
 │   ├── userdir.py                     # OS-specific config / log dirs
 │   ├── logger.py
-│   ├── binance.py / bybit.py / coinbase.py / kraken.py / kucoin.py / okx.py
+│   ├── binance.py / bybit.py / coinbase.py / hyperliquid.py / kraken.py / kucoin.py / okx.py
 ├── .gitlab-ci.yml                     # CI: Docker multi-arch build & push to GitLab Container Registry
 └── .gitlab/merge_request_templates/Default.md   # MR template + format reminder
 ```
@@ -380,7 +391,7 @@ The client itself does not run on GitLab-hosted runners. Signal routing, order p
 
 ## Roadmap
 
-- Additional exchange adapters (Bitget, BingX, Hyperliquid) — by request.
+- Additional exchange adapters (Bitget, BingX) — by request.
 - Multi-account routing (run several strategies against several accounts from one client).
 - Optional Telegram mirror — the client posts a copy of every action it takes to a Telegram channel of your choice.
 

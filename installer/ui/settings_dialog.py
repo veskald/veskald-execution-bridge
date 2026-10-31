@@ -135,6 +135,17 @@ EXCHANGES: List[ExchangeSpec] = [
         bools=[],
         docs="KuCoin Futures API key with Futures trade permission.",
     ),
+    ExchangeSpec(
+        label="Hyperliquid",
+        broker="hyperliquid",
+        fields=[
+            FieldSpec("HYPERLIQUID_ACCOUNT_ADDRESS", "Account address", placeholder="0x…"),
+            FieldSpec("HYPERLIQUID_PRIVATE_KEY", "API wallet private key", secret=True),
+        ],
+        bools=[BoolSpec("HYPERLIQUID_TESTNET", "Testnet")],
+        docs="Perpetuals. Create an API wallet at app.hyperliquid.xyz/API and paste "
+             "its private key; the account address is your main wallet.",
+    ),
 ]
 
 

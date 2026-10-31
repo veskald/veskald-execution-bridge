@@ -29,6 +29,7 @@ project_modules = [
     "lib.coinbase",
     "lib.kraken",
     "lib.kucoin",
+    "lib.hyperliquid",
     "lib.okx",
     "lib.logger",
     "lib.ssl_bootstrap",
@@ -72,6 +73,11 @@ hidden_imports = list(project_modules) + [
     "kraken.futures",
     "coinbase",
     "coinbase.rest",
+    "hyperliquid",
+    "hyperliquid.exchange",
+    "hyperliquid.info",
+    "eth_account",
+    "msgpack",
     # crypto / signing
     "cryptography",
     "cryptography.hazmat.backends.openssl",
@@ -93,6 +99,9 @@ hidden_imports += collect_submodules("pybit")
 hidden_imports += collect_submodules("okx")
 hidden_imports += collect_submodules("kraken")
 hidden_imports += collect_submodules("coinbase")
+hidden_imports += collect_submodules("hyperliquid")
+hidden_imports += collect_submodules("eth_account")
+hidden_imports += collect_submodules("eth_keys")
 hidden_imports += collect_submodules("binance_common")
 hidden_imports += collect_submodules("binance_sdk_derivatives_trading_usds_futures")
 hidden_imports += collect_submodules("engineio")
@@ -127,6 +136,11 @@ for dist in (
     "python-okx",
     "python-kraken-sdk",
     "coinbase-advanced-py",
+    "hyperliquid-python-sdk",
+    "eth-account",
+    "eth-utils",
+    "eth-keys",
+    "msgpack",
     "python-socketio",
     "python-engineio",
     "aiohttp",

@@ -13,6 +13,8 @@ binance-sdk-derivatives-trading-usds-futures==10.0.1
 pybit==5.16.0
 python-kraken-sdk==1.6.2
 python-okx==0.4.1
+hyperliquid-python-sdk==0.24.0
+eth-account==0.13.7
 
 # coinbase-advanced-py is installed separately with --no-deps (see Dockerfile:
 # its own pins clash with the other SDKs), so its runtime deps are listed here.

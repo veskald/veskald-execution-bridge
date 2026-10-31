@@ -39,6 +39,7 @@ BROKERS_DISPLAY = [
     ("okx",      "OKX"),
     ("coinbase", "Coinbase"),
     ("kucoin",   "KuCoin"),
+    ("hyperliquid", "Hyperliquid"),
 ]
 
 

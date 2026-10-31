@@ -1,6 +1,6 @@
 from typing import Literal
 
-Broker = Literal["binance", "bybit", "kraken", "okx", "coinbase", "kucoin"]
+Broker = Literal["binance", "bybit", "kraken", "okx", "coinbase", "kucoin", "hyperliquid"]
 
 _KRAKEN_BASE_RENAME = {"BTC": "XBT"}
 _KUCOIN_BASE_RENAME = {"BTC": "XBT"}
@@ -17,7 +17,7 @@ def _split_binance_symbol(symbol: str) -> tuple[str, str]:
 
 
 def to_exchange_symbol(symbol: str, broker: Broker) -> str:
-    if broker not in ("binance", "bybit", "kraken", "okx", "coinbase", "kucoin"):
+    if broker not in ("binance", "bybit", "kraken", "okx", "coinbase", "kucoin", "hyperliquid"):
         raise ValueError(f"Unknown broker: {broker}")
 
     s = symbol.upper().strip()
@@ -37,6 +37,9 @@ def to_exchange_symbol(symbol: str, broker: Broker) -> str:
     if broker == "coinbase":
         return f"{base}-PERP-INTX"
 
+    if broker == "hyperliquid":
+        return "k" + base[4:] if base.startswith("1000") else base
+
     if broker == "kucoin":
         base_kc = _KUCOIN_BASE_RENAME.get(base, base)
         return f"{base_kc}{quote}M"
@@ -47,6 +50,10 @@ def to_exchange_symbol(symbol: str, broker: Broker) -> str:
 def from_exchange_symbol(symbol: str, broker: Broker) -> str:
     if broker in ("binance", "bybit"):
         return symbol.upper().strip()
+
+    if broker == "hyperliquid":
+        coin = symbol.strip()
+        return ("1000" + coin[1:] if coin.startswith("k") else coin.upper()) + "USDT"
 
     s = symbol.upper().strip()
 

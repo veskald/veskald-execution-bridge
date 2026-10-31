@@ -1,6 +1,6 @@
 """
 Trader factory. The socket command carries a "broker" field:
-  "binance" | "bybit" | "kraken" | "okx" | "coinbase" | "kucoin"
+  "binance" | "bybit" | "kraken" | "okx" | "coinbase" | "kucoin" | "hyperliquid"
 
 Exchange SDKs are imported lazily: when one exchange's keys/SDK are
 missing, the others keep working.
@@ -12,7 +12,7 @@ from .logger import get_logger
 
 _logger = get_logger("TraderFactory")
 
-_BROKERS = ("binance", "bybit", "kraken", "okx", "coinbase", "kucoin")
+_BROKERS = ("binance", "bybit", "kraken", "okx", "coinbase", "kucoin", "hyperliquid")
 SUPPORTED_BROKERS = _BROKERS
 
 
@@ -35,6 +35,9 @@ def _normalize_broker(value: Any) -> str:
         "kucoin-futures": "kucoin",
         "kucoinfutures": "kucoin",
         "kumex": "kucoin",
+        "hl": "hyperliquid",
+        "hyperliquid-perp": "hyperliquid",
+        "hyperliquid-perps": "hyperliquid",
     }
     return aliases.get(s, s)
 
@@ -59,6 +62,9 @@ def build_trader(data: Dict[str, Any]) -> BaseTrader:
     if broker == "kucoin":
         from lib.kucoin import VeskaldKucoin
         return VeskaldKucoin(data)
+    if broker == "hyperliquid":
+        from lib.hyperliquid import VeskaldHyperliquid
+        return VeskaldHyperliquid(data)
     raise ValueError(
         f"Unknown broker: {broker!r}. Expected one of: {_BROKERS}"
     )

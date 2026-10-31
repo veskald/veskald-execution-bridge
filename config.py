@@ -53,6 +53,11 @@ KUCOIN_API_KEY = os.getenv("KUCOIN_API_KEY")
 KUCOIN_API_SECRET = os.getenv("KUCOIN_API_SECRET")
 KUCOIN_API_PASSPHRASE = os.getenv("KUCOIN_API_PASSPHRASE")
 
+# Hyperliquid perpetuals. Private key of an API (agent) wallet, never the main wallet.
+HYPERLIQUID_ACCOUNT_ADDRESS = os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS")
+HYPERLIQUID_PRIVATE_KEY = os.getenv("HYPERLIQUID_PRIVATE_KEY")
+HYPERLIQUID_TESTNET = os.getenv("HYPERLIQUID_TESTNET", "false").lower() == "true"
+
 
 ID_FILE = os.path.join(_APP_DIR, ".unique_id")
 ENV_UNIQUE_ID = os.getenv("UNIQUE_ID")
@@ -87,4 +92,6 @@ def has_credentials(broker: str) -> bool:
         return bool(
             KUCOIN_API_KEY and KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE
         )
+    if b == "hyperliquid":
+        return bool(HYPERLIQUID_ACCOUNT_ADDRESS and HYPERLIQUID_PRIVATE_KEY)
     return False

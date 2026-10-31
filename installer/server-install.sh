@@ -212,6 +212,7 @@ write_env() {
     "OKX:OKX:OKX_API_KEY:OKX_API_SECRET:OKX_API_PASSPHRASE,OKX_DEMO=false,OKX_DEFAULT_ISOLATED=false"
     "Coinbase:COINBASE:COINBASE_API_KEY:COINBASE_API_SECRET:COINBASE_INTX_PORTFOLIO_UUID"
     "KuCoin Futures:KUCOIN:KUCOIN_API_KEY:KUCOIN_API_SECRET:KUCOIN_API_PASSPHRASE"
+    "Hyperliquid:HYPERLIQUID:HYPERLIQUID_ACCOUNT_ADDRESS:HYPERLIQUID_PRIVATE_KEY:HYPERLIQUID_TESTNET=false"
   )
 
   for section in "${SECTIONS[@]}"; do
@@ -221,8 +222,12 @@ write_env() {
     if ! ask_yes_no "Configure $label?" "N"; then
       continue
     fi
-    KEYS[$key_var]="$(ask_required "$label API Key")"
-    KEYS[$secret_var]="$(ask_secret "$label API Secret")"
+    case "$_prefix" in
+      HYPERLIQUID) key_label="account address"; secret_label="API wallet private key";;
+      *) key_label="API Key"; secret_label="API Secret";;
+    esac
+    KEYS[$key_var]="$(ask_required "$label $key_label")"
+    KEYS[$secret_var]="$(ask_secret "$label $secret_label")"
     # extras: comma-separated "VAR" or "VAR=default"
     if [[ -n "$extras" ]]; then
       IFS=',' read -ra fields <<< "$extras"

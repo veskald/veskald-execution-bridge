@@ -67,6 +67,14 @@ SECTIONS = [
             "KUCOIN_API_PASSPHRASE",
         ],
     ),
+    (
+        "Hyperliquid",
+        [
+            "HYPERLIQUID_ACCOUNT_ADDRESS",
+            "HYPERLIQUID_PRIVATE_KEY",
+            "HYPERLIQUID_TESTNET",
+        ],
+    ),
 ]
 
 
