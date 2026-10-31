@@ -9,15 +9,17 @@
 # Run:
 #   bash <(curl -fsSL https://gitlab.com/veskald/veskald-execution-bridge/-/raw/main/installer/server-install.sh)
 #
-# Subcommands (once installed):
-#   bash server-install.sh install        # default — wizard + start
-#   bash server-install.sh update         # pull latest image, restart
-#   bash server-install.sh logs           # tail container logs
-#   bash server-install.sh restart        # restart container
-#   bash server-install.sh stop           # stop container
-#   bash server-install.sh reconfigure    # rerun wizard, overwrite .env
-#   bash server-install.sh status         # docker compose ps
-#   bash server-install.sh uninstall      # remove container + image + dir
+# Subcommands (once installed, the script saves itself next to .env):
+#   bash /opt/veskald-execution-bridge/server-install.sh install        # default — wizard + start
+#   bash /opt/veskald-execution-bridge/server-install.sh update         # pull latest image, restart
+#   bash /opt/veskald-execution-bridge/server-install.sh logs           # tail container logs
+#   bash /opt/veskald-execution-bridge/server-install.sh restart        # restart container
+#   bash /opt/veskald-execution-bridge/server-install.sh stop           # stop container
+#   bash /opt/veskald-execution-bridge/server-install.sh configure hyperliquid
+#                                         # add or change one exchange, keep the rest
+#   bash /opt/veskald-execution-bridge/server-install.sh reconfigure    # rerun wizard; Enter keeps current values
+#   bash /opt/veskald-execution-bridge/server-install.sh status         # docker compose ps
+#   bash /opt/veskald-execution-bridge/server-install.sh uninstall      # remove container + image + dir
 
 set -euo pipefail
 
@@ -152,11 +154,17 @@ ask() {
   echo "${var:-$default}"
 }
 
+# ask_required / ask_secret LABEL [CURRENT]: with a current value, Enter keeps it.
 ask_required() {
-  local label="$1" var
+  local label="$1" current="${2:-}" var
   while :; do
-    read -r -p "  $label: " var || true
+    if [[ -n "$current" ]]; then
+      read -r -p "  $label [Enter keeps current]: " var || die "Input closed."
+    else
+      read -r -p "  $label: " var || die "Input closed."
+    fi
     var="${var//$'\r'/}"
+    var="${var:-$current}"
     if [[ -n "$var" ]]; then
       echo "$var"
       return
@@ -166,14 +174,19 @@ ask_required() {
 }
 
 ask_secret() {
-  local label="$1" var
+  local label="$1" current="${2:-}" var
   while :; do
-    read -r -s -p "  $label: " var || true
-    echo
+    if [[ -n "$current" ]]; then
+      read -r -s -p "  $label [Enter keeps current]: " var || die "Input closed."
+    else
+      read -r -s -p "  $label: " var || die "Input closed."
+    fi
+    echo >&2
     # Strip CR so a pasted secret with a trailing \r\n from a Windows
     # clipboard or PuTTY doesn't turn into an empty value followed by a
     # leaked next-line tail in .env.
     var="${var//$'\r'/}"
+    var="${var:-$current}"
     if [[ -n "$var" ]]; then
       echo "$var"
       return
@@ -191,74 +204,130 @@ ask_yes_no() {
   case "$answer" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
-write_env() {
-  local prefix="$1"
-  local env_path="$prefix/.env"
+# "Label:PREFIX:KEY_VAR:SECRET_VAR:extras" — extras are comma-separated
+# "VAR" or "VAR=default". PREFIX, lower-cased, is the broker name the bot uses.
+declare -a SECTIONS=(
+  "Binance:BINANCE:BINANCE_API_KEY:BINANCE_API_SECRET:"
+  "Bybit:BYBIT:BYBIT_API_KEY:BYBIT_API_SECRET:BYBIT_TESTNET=false"
+  "Kraken Futures:KRAKEN:KRAKEN_API_KEY:KRAKEN_API_SECRET:KRAKEN_SANDBOX=false"
+  "OKX:OKX:OKX_API_KEY:OKX_API_SECRET:OKX_API_PASSPHRASE,OKX_DEMO=false,OKX_DEFAULT_ISOLATED=false"
+  "Coinbase:COINBASE:COINBASE_API_KEY:COINBASE_API_SECRET:COINBASE_INTX_PORTFOLIO_UUID"
+  "KuCoin Futures:KUCOIN:KUCOIN_API_KEY:KUCOIN_API_SECRET:KUCOIN_API_PASSPHRASE"
+  "Hyperliquid:HYPERLIQUID:HYPERLIQUID_ACCOUNT_ADDRESS:HYPERLIQUID_PRIVATE_KEY:HYPERLIQUID_TESTNET=false"
+)
 
-  echo
-  c_bold "  ───── Veskald hub ─────"; echo
-  HUB_URL="$(ask 'Hub URL' "$DEFAULT_HUB_URL")"
-  while :; do
-    MACHINE="$(ask 'Machine token (from app.veskald.com/notifications)' "")"
-    [[ -n "$MACHINE" ]] && break
-    warn "Machine token is required."
-  done
-
-  declare -A KEYS
-  declare -a SECTIONS=(
-    "Binance:BINANCE:BINANCE_API_KEY:BINANCE_API_SECRET:"
-    "Bybit:BYBIT:BYBIT_API_KEY:BYBIT_API_SECRET:BYBIT_TESTNET=false"
-    "Kraken Futures:KRAKEN:KRAKEN_API_KEY:KRAKEN_API_SECRET:KRAKEN_SANDBOX=false"
-    "OKX:OKX:OKX_API_KEY:OKX_API_SECRET:OKX_API_PASSPHRASE,OKX_DEMO=false,OKX_DEFAULT_ISOLATED=false"
-    "Coinbase:COINBASE:COINBASE_API_KEY:COINBASE_API_SECRET:COINBASE_INTX_PORTFOLIO_UUID"
-    "KuCoin Futures:KUCOIN:KUCOIN_API_KEY:KUCOIN_API_SECRET:KUCOIN_API_PASSPHRASE"
-    "Hyperliquid:HYPERLIQUID:HYPERLIQUID_ACCOUNT_ADDRESS:HYPERLIQUID_PRIVATE_KEY:HYPERLIQUID_TESTNET=false"
-  )
-
+known_exchange() {
+  local wanted="${1,,}" section _label _prefix _rest
   for section in "${SECTIONS[@]}"; do
-    IFS=":" read -r label _prefix key_var secret_var extras <<< "$section"
-    echo
-    c_bold "  ───── $label ─────"; echo
-    if ! ask_yes_no "Configure $label?" "N"; then
+    IFS=":" read -r _label _prefix _rest <<< "$section"
+    [[ "${_prefix,,}" == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+exchange_names() {
+  local section _label _prefix _rest
+  for section in "${SECTIONS[@]}"; do
+    IFS=":" read -r _label _prefix _rest <<< "$section"
+    printf '%s ' "${_prefix,,}"
+  done
+}
+
+# Loads PATH's VAR=value lines into the caller's KEYS array.
+load_env() {
+  local path="$1" line
+  [[ -f "$path" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    if [[ -z "$line" || "$line" == \#* || "$line" != *=* ]]; then
       continue
     fi
-    case "$_prefix" in
-      HYPERLIQUID) key_label="account address"; secret_label="API wallet private key";;
-      *) key_label="API Key"; secret_label="API Secret";;
-    esac
-    KEYS[$key_var]="$(ask_required "$label $key_label")"
-    KEYS[$secret_var]="$(ask_secret "$label $secret_label")"
-    # extras: comma-separated "VAR" or "VAR=default"
-    if [[ -n "$extras" ]]; then
-      IFS=',' read -ra fields <<< "$extras"
-      for field in "${fields[@]}"; do
-        local fkey fdefault
-        if [[ "$field" == *"="* ]]; then
-          fkey="${field%%=*}"
-          fdefault="${field#*=}"
-        else
-          fkey="$field"
-          fdefault=""
-        fi
-        # Passphrases (OKX, KuCoin) are sensitive
-        if [[ "$fkey" == *PASSPHRASE* ]]; then
-          KEYS[$fkey]="$(ask_secret "$fkey")"
-        else
-          KEYS[$fkey]="$(ask "$fkey" "$fdefault")"
-        fi
-      done
+    KEYS["${line%%=*}"]="${line#*=}"
+  done < "$path"
+}
+
+# Asks one exchange section into KEYS. Values already in KEYS are offered
+# as "Enter keeps current"; declining the section leaves them untouched.
+# FORCED skips the yes/no and goes straight to the questions.
+ask_section() {
+  local label="$1" _prefix="$2" key_var="$3" secret_var="$4" extras="$5" forced="${6:-}"
+  local -a fields=()
+  if [[ -n "$extras" ]]; then
+    IFS=',' read -ra fields <<< "$extras"
+  fi
+  local configured="" var field spec_default
+  for var in "$key_var" "$secret_var" "${fields[@]%%=*}"; do
+    if [[ -n "${KEYS[$var]:-}" ]]; then
+      configured=1
     fi
+  done
+
+  echo
+  c_bold "  ───── $label ─────"; echo
+  if [[ -z "$forced" ]]; then
+    local question="Configure $label?"
+    if [[ -n "$configured" ]]; then
+      question="$label is configured. Change it?"
+    fi
+    ask_yes_no "$question" "N" || return 0
+  fi
+
+  local key_label="API Key" secret_label="API Secret"
+  if [[ "$_prefix" == "HYPERLIQUID" ]]; then
+    key_label="account address"; secret_label="API wallet private key"
+  fi
+  KEYS[$key_var]="$(ask_required "$label $key_label" "${KEYS[$key_var]:-}")"
+  KEYS[$secret_var]="$(ask_secret "$label $secret_label" "${KEYS[$secret_var]:-}")"
+  for field in "${fields[@]}"; do
+    var="${field%%=*}"
+    spec_default=""
+    if [[ "$field" == *=* ]]; then
+      spec_default="${field#*=}"
+    fi
+    # Passphrases (OKX, KuCoin) are sensitive
+    if [[ "$var" == *PASSPHRASE* ]]; then
+      KEYS[$var]="$(ask_secret "$var" "${KEYS[$var]:-}")"
+    else
+      KEYS[$var]="$(ask "$var" "${KEYS[$var]:-$spec_default}")"
+    fi
+  done
+}
+
+# write_env PREFIX [EXCHANGE]: merges the wizard's answers into PREFIX/.env.
+# With EXCHANGE only that section is asked and the hub settings are kept.
+write_env() {
+  local prefix="$1" only="${2:-}"
+  local env_path="$prefix/.env"
+  declare -A KEYS
+  load_env "$env_path"
+  local hub_url="${KEYS[HUB_URL]:-}" machine="${KEYS[MACHINE]:-}"
+  unset 'KEYS[HUB_URL]' 'KEYS[MACHINE]'
+
+  if [[ -z "$only" || -z "$machine" ]]; then
+    echo
+    c_bold "  ───── Veskald hub ─────"; echo
+    hub_url="$(ask 'Hub URL' "${hub_url:-$DEFAULT_HUB_URL}")"
+    machine="$(ask_required 'Machine token (from app.veskald.com/notifications)' "$machine")"
+  fi
+
+  local section label _prefix key_var secret_var extras
+  for section in "${SECTIONS[@]}"; do
+    IFS=":" read -r label _prefix key_var secret_var extras <<< "$section"
+    if [[ -n "$only" && "${_prefix,,}" != "${only,,}" ]]; then
+      continue
+    fi
+    ask_section "$label" "$_prefix" "$key_var" "$secret_var" "$extras" "$only"
   done
 
   # Write atomically.
-  local tmp
+  local tmp var val
   tmp="$(mktemp)"
   {
     echo "# Veskald Execution Bridge — generated by server-install.sh"
     echo "# $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
     echo
-    echo "HUB_URL=$HUB_URL"
-    echo "MACHINE=$MACHINE"
+    echo "HUB_URL=${hub_url:-$DEFAULT_HUB_URL}"
+    echo "MACHINE=$machine"
     for var in "${!KEYS[@]}"; do
       val="${KEYS[$var]}"
       val="${val//$'\r'/}"
@@ -321,7 +390,7 @@ action_install() {
   save_installer_to_prefix "$prefix"
 
   if [[ -f "$prefix/.env" ]]; then
-    if ! ask_yes_no "$prefix/.env exists. Overwrite?" "N"; then
+    if ! ask_yes_no "$prefix/.env exists. Review it? (Enter keeps current values)" "N"; then
       info "Keeping existing .env"
     else
       write_env "$prefix"
@@ -352,6 +421,7 @@ action_install() {
   say "  Status:        bash $self status"
   say "  Logs:          bash $self logs"
   say "  Update image:  bash $self update"
+  say "  Add exchange:  bash $self configure <exchange>"
   say "  Reconfigure:   bash $self reconfigure"
   say "  Stop:          bash $self stop"
   say "  Uninstall:     bash $self uninstall"
@@ -407,6 +477,19 @@ action_reconfigure() {
   c_green "  ✓ Reconfigured and restarted."; echo
 }
 
+action_configure() {
+  if [[ -z "$EXCHANGE" ]] || ! known_exchange "$EXCHANGE"; then
+    die "Usage: configure <exchange>. One of: $(exchange_names)"
+  fi
+  local prefix; prefix="$(resolve_prefix)"
+  [[ -f "$prefix/docker-compose.yml" ]] || die "Not installed at $prefix. Run install first."
+  save_installer_to_prefix "$prefix"
+  write_env "$prefix" "$EXCHANGE"
+  info "Restarting container with new config"
+  compose_in "$prefix" up -d --force-recreate
+  c_green "  ✓ ${EXCHANGE,,} configured, container restarted."; echo
+}
+
 action_uninstall() {
   local prefix; prefix="$(resolve_prefix)"
   echo
@@ -445,7 +528,10 @@ Subcommands:
   logs           tail -f the container logs
   restart        Restart the container
   stop           Stop the container
-  reconfigure    Rerun the wizard, overwrite .env, recreate container
+  configure EXCHANGE
+                 Add or change one exchange, keep the rest, recreate container
+                 (binance, bybit, kraken, okx, coinbase, kucoin, hyperliquid)
+  reconfigure    Rerun the whole wizard; Enter keeps every current value
   uninstall      Remove the container, image and install directory
 
 Options:
@@ -459,16 +545,28 @@ Examples:
 EOF
 }
 
+# Sourced (the test-suite does this to drive the wizard): define functions only.
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 # ---- arg parsing ----------------------------------------------------------
 
 ACTION="install"
-for arg in "$@"; do
-  case "$arg" in
-    install|update|logs|status|restart|stop|reconfigure|uninstall) ACTION="$arg" ;;
-    --prefix=*)        PREFIX="${arg#--prefix=}"; export PREFIX ;;
+EXCHANGE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    configure)
+      ACTION="configure"
+      if [[ -n "${2:-}" && "${2:-}" != --* ]]; then
+        EXCHANGE="$2"; shift
+      fi ;;
+    install|update|logs|status|restart|stop|reconfigure|uninstall) ACTION="$1" ;;
+    --prefix=*)        PREFIX="${1#--prefix=}"; export PREFIX ;;
     -h|--help)         usage; exit 0 ;;
-    *) warn "Unknown argument: $arg"; usage; exit 1 ;;
+    *) warn "Unknown argument: $1"; usage; exit 1 ;;
   esac
+  shift
 done
 
 case "$ACTION" in
@@ -478,6 +576,7 @@ case "$ACTION" in
   status)      action_status ;;
   restart)     action_restart ;;
   stop)        action_stop ;;
+  configure)   action_configure ;;
   reconfigure) action_reconfigure ;;
   uninstall)   action_uninstall ;;
 esac

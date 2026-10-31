@@ -286,15 +286,21 @@ How you keep the client up-to-date depends on the install path you picked.
 
 ### Server one-liner (`server-install.sh`)
 
+The installer saves a copy of itself next to `.env`, in `/opt/veskald-execution-bridge/` (or `$HOME/veskald-execution-bridge/` for non-root installs). Run the subcommands from there:
+
 ```bash
-bash server-install.sh update         # pull the latest image, restart container
-bash server-install.sh status         # docker compose ps
-bash server-install.sh logs           # tail -f the container logs
+cd /opt/veskald-execution-bridge
+bash server-install.sh update                  # pull the latest image, restart container
+bash server-install.sh status                  # docker compose ps
+bash server-install.sh logs                    # tail -f the container logs
 bash server-install.sh restart
 bash server-install.sh stop
-bash server-install.sh reconfigure    # rerun the wizard, overwrite .env
-bash server-install.sh uninstall      # remove container + image + dir
+bash server-install.sh configure hyperliquid   # add or change one exchange, keep the rest, restart
+bash server-install.sh reconfigure             # rerun the whole wizard; Enter keeps every current value
+bash server-install.sh uninstall               # remove container + image + dir
 ```
+
+`configure` takes one of `binance`, `bybit`, `kraken`, `okx`, `coinbase`, `kucoin`, `hyperliquid` and asks only for that exchange's keys; everything else in `.env`, including values added by hand, is kept.
 
 Pin a specific image version: edit the generated `docker-compose.yml` and replace `:latest` with e.g. `:v1.2.3`, then `bash server-install.sh restart`.
 
