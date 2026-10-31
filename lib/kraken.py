@@ -1,11 +1,11 @@
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from kraken.futures import Market, Trade, User
 
 from config import KRAKEN_API_KEY, KRAKEN_API_SECRET, KRAKEN_SANDBOX
 from lib.base_trader import (
-    BaseTrader, Direction, PositionMode, make_client_id,
+    BaseTrader, Direction, PositionMode, ProtectiveOrder, make_client_id,
 )
 from lib.symbols import to_exchange_symbol
 
@@ -260,6 +260,33 @@ class VeskaldKraken(BaseTrader):
         close_side = self._close_side(direction)
         self._cancel_stop_orders(symbol=symbol, side_to_cancel=close_side)
 
+    def list_protective_orders(self) -> Optional[List[ProtectiveOrder]]:
+        resp = self._safe_call(self.user.get_open_orders, retries=0)
+        if resp is None:
+            return None
+        orders = (
+            self.protective_order(
+                o.get("order_id"), o.get("cliOrdId"), o.get("symbol"), o.get("side"),
+            )
+            for o in resp.get("openOrders") or []
+        )
+        return [o for o in orders if o]
+
+    def list_open_positions(self) -> Optional[Set[Tuple[str, Direction]]]:
+        resp = self._safe_call(self.user.get_open_positions, retries=0)
+        if resp is None:
+            return None
+        positions = (
+            (p.get("symbol"), self.position_direction(p.get("side"), p.get("size")))
+            for p in resp.get("openPositions") or []
+        )
+        return {p for p in positions if p[1]}
+
+    def cancel_protective_order(self, order: ProtectiveOrder) -> bool:
+        return self._safe_call(
+            self.trade.cancel_order, retries=2, order_id=order.order_id,
+        ) is not None
+
 
 
     def _place_stop(
@@ -303,7 +330,7 @@ class VeskaldKraken(BaseTrader):
         self, symbol: str, side_to_cancel: str,
         keep_order_id: Optional[str] = None,
     ) -> None:
-        resp = self._safe_call(self.trade.get_open_orders)
+        resp = self._safe_call(self.user.get_open_orders)
         if resp is None or not isinstance(resp, dict):
             return
         ex_sym = self._ex_symbol(symbol).lower()

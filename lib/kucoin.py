@@ -5,7 +5,7 @@ import json
 import sys
 import time
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlencode
 
 import requests
@@ -16,7 +16,8 @@ from config import (
     KUCOIN_API_SECRET,
 )
 from lib.base_trader import (
-    BaseTrader, Direction, PositionMode, make_client_id,
+    MAX_LIST_PAGES, BaseTrader, Direction, PositionMode, ProtectiveOrder,
+    make_client_id,
 )
 from lib.symbols import to_exchange_symbol
 
@@ -199,6 +200,8 @@ class _KucoinFuturesClient:
 
 class VeskaldKucoin(BaseTrader):
     BROKER_NAME = "kucoin"
+
+    _STOP_PAGE_SIZE = 50
 
     _PARTNER_WARNING_LOGGED: bool = False
 
@@ -502,6 +505,45 @@ class VeskaldKucoin(BaseTrader):
             self._client.delete, retries=2, path="/api/v1/stopOrders",
             params={"symbol": self._ex_symbol(symbol)},
         )
+
+    def list_protective_orders(self) -> Optional[List[ProtectiveOrder]]:
+        rows: List[Dict[str, Any]] = []
+        for page in range(1, MAX_LIST_PAGES + 1):
+            resp = self._safe_call(
+                self._client.get, retries=0, path="/api/v1/stopOrders",
+                params={"currentPage": page, "pageSize": self._STOP_PAGE_SIZE},
+            )
+            if resp is None:
+                return None
+            data = self._data(resp)
+            rows += data.get("items") or []
+            if page >= int(data.get("totalPage") or 0):
+                break
+        else:
+            return None
+        orders = (
+            self.protective_order(
+                o.get("id"), o.get("clientOid"), o.get("symbol"), o.get("side"),
+            )
+            for o in rows
+        )
+        return [o for o in orders if o]
+
+    def list_open_positions(self) -> Optional[Set[Tuple[str, Direction]]]:
+        resp = self._safe_call(self._client.get, retries=0, path="/api/v1/positions")
+        if resp is None:
+            return None
+        positions = (
+            (r.get("symbol"),
+             self.position_direction(r.get("positionSide"), r.get("currentQty")))
+            for r in self._data_list(resp)
+        )
+        return {p for p in positions if p[1]}
+
+    def cancel_protective_order(self, order: ProtectiveOrder) -> bool:
+        return self._safe_call(
+            self._client.delete, retries=2, path=f"/api/v1/orders/{order.order_id}",
+        ) is not None
 
     def _place_stop(
         self, symbol: str, trigger_price: float, direction: str,

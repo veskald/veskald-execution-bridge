@@ -1,6 +1,6 @@
 import re
 import time
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from binance_common.configuration import ConfigurationRestAPI
 from binance_common.constants import DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL
@@ -10,7 +10,7 @@ from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futur
 
 from config import BINANCE_API_KEY, BINANCE_API_SECRET
 from lib.base_trader import (
-    BaseTrader, Direction, PositionMode, make_client_id,
+    BaseTrader, Direction, PositionMode, ProtectiveOrder, make_client_id,
 )
 from lib.symbols import to_exchange_symbol
 
@@ -391,6 +391,39 @@ class VeskaldBinance(BaseTrader):
                         retries=2,
                         algo_id=int(algo_id),
                     )
+
+    def list_protective_orders(self) -> Optional[List[ProtectiveOrder]]:
+        rows = self._safe_call(
+            self.client.rest_api.current_all_algo_open_orders,
+            retries=0,
+            algo_type="CONDITIONAL",
+        )
+        if rows is None:
+            return None
+        orders = (
+            self.protective_order(o.algo_id, o.client_algo_id, o.symbol, o.side)
+            for o in rows
+        )
+        return [o for o in orders if o]
+
+    def list_open_positions(self) -> Optional[Set[Tuple[str, Direction]]]:
+        rows = self._safe_call(
+            self.client.rest_api.position_information_v3, retries=0,
+        )
+        if rows is None:
+            return None
+        positions = (
+            (r.symbol, self.position_direction(r.position_side, r.position_amt))
+            for r in rows
+        )
+        return {p for p in positions if p[1]}
+
+    def cancel_protective_order(self, order: ProtectiveOrder) -> bool:
+        return self._safe_call(
+            self.client.rest_api.cancel_algo_order,
+            retries=2,
+            algo_id=int(order.order_id),
+        ) is not None
 
     # ---------- internal ----------
 

@@ -2,7 +2,7 @@ import re
 import uuid
 from abc import ABC, abstractmethod
 from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple
 
 from lib.logger import get_logger
 
@@ -12,12 +12,21 @@ Direction = Literal["LONG", "SHORT"]
 
 
 _CLIENT_ID_RE = re.compile(r"[^A-Za-z0-9_\-]")
+_PROTECTIVE_CLIENT_ID_RE = re.compile(r"(sl|tp)-[0-9a-f]{16}")
+
+MAX_LIST_PAGES = 50
 
 
 def make_client_id(prefix: str) -> str:
     raw = f"{prefix}-{uuid.uuid4().hex[:16]}"
     safe = _CLIENT_ID_RE.sub("", raw)
     return safe[:36]
+
+
+class ProtectiveOrder(NamedTuple):
+    order_id: str
+    symbol: str
+    direction: Direction
 
 
 
@@ -160,6 +169,9 @@ class BaseTrader(ABC):
             )
             return None
 
+        # A closed predecessor's leftover SL/TP would act on the new position.
+        self.cancel_orphan_orders()
+
         self.set_isolated_margin(symbol)
         self.set_leverage(symbol, int(position_data["leverage"]))
 
@@ -277,6 +289,73 @@ class BaseTrader(ABC):
             return
         self.market_close(symbol, direction, close_qty, position_mode)
 
+    def cancel_orphan_orders(self) -> None:
+        """Cancels the bridge's SL/TP orders whose position is already closed.
+
+        Orders are listed before positions: an SL placed for a position that
+        opens in between then misses the order snapshot instead of showing up
+        without its position. Never raises — it also runs ahead of opening.
+        """
+        try:
+            orders = self.list_protective_orders()
+            if not orders:
+                return
+            positions = self.list_open_positions()
+            if positions is None:
+                return
+            open_sides = {(symbol.upper(), direction) for symbol, direction in positions}
+            for order in orders:
+                if (order.symbol.upper(), order.direction) in open_sides:
+                    continue
+                self.logger.info(
+                    f"Cancelling orphan order {order.order_id}: "
+                    f"{order.symbol} {order.direction} position is closed",
+                    extra={"symbol": order.symbol, "broker": self.BROKER_NAME},
+                )
+                if not self.cancel_protective_order(order):
+                    self.logger.error(
+                        f"Failed to cancel orphan order {order.order_id}",
+                        extra={"symbol": order.symbol, "broker": self.BROKER_NAME},
+                    )
+        except Exception:
+            self.logger.error(
+                "Orphan order cleanup failed",
+                extra={"broker": self.BROKER_NAME},
+                exc_info=True,
+            )
+
+    @staticmethod
+    def protective_order(
+        order_id: Any, client_id: Any, symbol: Any, side: Any,
+    ) -> Optional[ProtectiveOrder]:
+        """The bridge's own SL/TP order, or None for any other order.
+
+        SL/TP always sit on the close side, so the side names the direction
+        of the position they protect.
+        """
+        if not order_id or not _PROTECTIVE_CLIENT_ID_RE.fullmatch(str(client_id or "")):
+            return None
+        direction = {"SELL": "LONG", "BUY": "SHORT"}.get(str(side).upper())
+        if direction is None:
+            return None
+        return ProtectiveOrder(str(order_id), str(symbol), direction)
+
+    @staticmethod
+    def position_direction(side: Any, size: Any) -> Optional[Direction]:
+        """Direction of a position row, None when it is flat.
+
+        One-way rows labelled BOTH/net carry the direction in the sign.
+        """
+        amount = float(size or 0)
+        if amount == 0:
+            return None
+        label = str(side or "").upper()
+        if "LONG" in label or label == "BUY":
+            return "LONG"
+        if "SHORT" in label or label == "SELL":
+            return "SHORT"
+        return "LONG" if amount > 0 else "SHORT"
+
 
     def set_position_mode(self, mode: PositionMode) -> bool:
         """Switches the account's position mode. False when unsupported."""
@@ -343,6 +422,20 @@ class BaseTrader(ABC):
     ) -> None:
 
         ...
+
+    @abstractmethod
+    def list_protective_orders(self) -> Optional[List[ProtectiveOrder]]:
+        """The bridge's open SL/TP orders on every symbol; None on failure."""
+
+    @abstractmethod
+    def list_open_positions(self) -> Optional[Set[Tuple[str, Direction]]]:
+        """(symbol, direction) of every open position; None on failure.
+
+        Must be complete: a position missing here loses its SL.
+        """
+
+    @abstractmethod
+    def cancel_protective_order(self, order: ProtectiveOrder) -> bool: ...
 
 
     @staticmethod

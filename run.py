@@ -1,7 +1,7 @@
 import signal
 import threading
 import time
-from queue import Queue
+from queue import Empty, Queue
 from typing import Dict, Optional
 import sys
 
@@ -22,6 +22,9 @@ sio = socketio.Client(reconnection=False, logger=False, engineio_logger=False)
 
 _command_queue: "Queue[dict]" = Queue()
 _stop_event = threading.Event()
+_worker_thread: Optional[threading.Thread] = None
+
+ORPHAN_SWEEP_INTERVAL_SEC = 300.0
 
 
 def request_stop() -> None:
@@ -66,44 +69,89 @@ def install_signal_handlers() -> None:
             pass
 
 
-def _worker_loop() -> None:
-    while True:
-        try:
-            data = _command_queue.get()
-        except Exception:
+def _execute_command(data: dict) -> None:
+    try:
+        trader = build_trader(data)
+        result = trader.execute_action()
+        if result:
+            logger.info(
+                "Sending report to server",
+                extra={"order_id": result, "broker": data.get("broker")},
+            )
+            try:
+                sio.emit(
+                    "command.result",
+                    {
+                        "ex_order_id": result,
+                        "strategy": data.get("strategy"),
+                        "broker": data.get("broker"),
+                    },
+                    namespace="/machines",
+                )
+                logger.info("Report sent")
+            except Exception as e:
+                logger.error(
+                    "Failed to send report",
+                    extra={"error": str(e), "order_id": result},
+                )
+    except Exception as e:
+        logger.error(
+            "Worker error while executing command",
+            extra={"error": str(e), "data": data},
+            exc_info=True,
+        )
+
+
+def _sweep_orphan_orders() -> None:
+    for broker in SUPPORTED_BROKERS:
+        if not has_credentials(broker):
             continue
         try:
-            trader = build_trader(data)
-            result = trader.execute_action()
-            if result:
-                logger.info(
-                    "Sending report to server",
-                    extra={"order_id": result, "broker": data.get("broker")},
-                )
-                try:
-                    sio.emit(
-                        "command.result",
-                        {
-                            "ex_order_id": result,
-                            "strategy": data.get("strategy"),
-                            "broker": data.get("broker"),
-                        },
-                        namespace="/machines",
-                    )
-                    logger.info("Report sent")
-                except Exception as e:
-                    logger.error(
-                        "Failed to send report",
-                        extra={"error": str(e), "order_id": result},
-                    )
+            build_trader({"broker": broker}).cancel_orphan_orders()
         except Exception as e:
             logger.error(
-                "Worker error while executing command",
-                extra={"error": str(e), "data": data},
+                "Orphan order sweep failed",
+                extra={"broker": broker, "error": str(e)},
                 exc_info=True,
             )
-        finally:
-            _command_queue.task_done()
+
+
+def _worker_step(next_sweep: float, now: float) -> float:
+    """Runs a due orphan sweep or one queued command; returns the next sweep time.
+
+    Sweeps share the command thread, so they never interleave with the
+    bridge's own order placement.
+    """
+    if now >= next_sweep:
+        if not _stop_event.is_set():
+            _sweep_orphan_orders()
+        return now + ORPHAN_SWEEP_INTERVAL_SEC
+    try:
+        data = _command_queue.get(timeout=next_sweep - now)
+    except Empty:
+        return next_sweep
+    try:
+        _execute_command(data)
+    finally:
+        _command_queue.task_done()
+    return next_sweep
+
+
+def _worker_loop() -> None:
+    next_sweep = time.monotonic()
+    while True:
+        next_sweep = _worker_step(next_sweep, time.monotonic())
+
+
+def _start_worker() -> None:
+    # The desktop app re-enters main() after Stop; a second worker would run
+    # commands and sweeps in parallel with the first.
+    global _worker_thread
+    if _worker_thread is None or not _worker_thread.is_alive():
+        _worker_thread = threading.Thread(
+            target=_worker_loop, daemon=True, name="cmd-worker",
+        )
+        _worker_thread.start()
 
 
 @sio.event(namespace="/machines")
@@ -203,8 +251,7 @@ def main(exit_on_missing_config: bool = True) -> None:
 
     _startup_check()
 
-    worker = threading.Thread(target=_worker_loop, daemon=True, name="cmd-worker")
-    worker.start()
+    _start_worker()
 
     backoff = 5
     while not _stop_event.is_set():

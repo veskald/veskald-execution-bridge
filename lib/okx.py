@@ -1,6 +1,6 @@
 import time
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from okx.Account import AccountAPI
 from okx.PublicData import PublicAPI
@@ -14,7 +14,8 @@ from config import (
     OKX_DEMO,
 )
 from lib.base_trader import (
-    BaseTrader, Direction, PositionMode, make_client_id,
+    MAX_LIST_PAGES, BaseTrader, Direction, PositionMode, ProtectiveOrder,
+    make_client_id,
 )
 from lib.symbols import to_exchange_symbol
 
@@ -76,6 +77,7 @@ def _classify(code: Optional[str], text: str = "") -> str:
 class VeskaldOkx(BaseTrader):
     BROKER_NAME = "okx"
     INST_TYPE = "SWAP"
+    _ALGO_PAGE_SIZE = 100
 
     def __init__(self, data: Dict[str, Any]):
         super().__init__(data)
@@ -422,6 +424,50 @@ class VeskaldOkx(BaseTrader):
             kind="all",
         )
 
+    def list_protective_orders(self) -> Optional[List[ProtectiveOrder]]:
+        rows: List[Dict[str, Any]] = []
+        after = ""
+        for _ in range(MAX_LIST_PAGES):
+            resp = self._safe_call(
+                self.trade.order_algos_list, retries=0,
+                ordType="conditional", instType=self.INST_TYPE,
+                after=after, limit=str(self._ALGO_PAGE_SIZE),
+            )
+            if resp is None:
+                return None
+            page = self._extract_data(resp)
+            rows += page
+            if len(page) < self._ALGO_PAGE_SIZE:
+                break
+            after = str(page[-1].get("algoId", ""))
+        else:
+            return None
+        orders = (
+            self.protective_order(
+                r.get("algoId"), r.get("algoClOrdId"), r.get("instId"), r.get("side"),
+            )
+            for r in rows
+        )
+        return [o for o in orders if o]
+
+    def list_open_positions(self) -> Optional[Set[Tuple[str, Direction]]]:
+        resp = self._safe_call(
+            self.account.get_positions, retries=0, instType=self.INST_TYPE,
+        )
+        if resp is None:
+            return None
+        positions = (
+            (r.get("instId"), self.position_direction(r.get("posSide"), r.get("pos")))
+            for r in self._extract_data(resp)
+        )
+        return {p for p in positions if p[1]}
+
+    def cancel_protective_order(self, order: ProtectiveOrder) -> bool:
+        return self._safe_call(
+            self.trade.cancel_algo_order, retries=2,
+            params=[{"algoId": order.order_id, "instId": order.symbol}],
+        ) is not None
+
 
 
     def _place_conditional(
@@ -489,7 +535,7 @@ class VeskaldOkx(BaseTrader):
 
 
         resp = self._safe_call(
-            self.trade.get_algo_order_list,
+            self.trade.order_algos_list,
             ordType="conditional", instType=self.INST_TYPE, instId=inst_id,
         )
         rows = self._extract_data(resp) if resp else []

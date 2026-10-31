@@ -1,12 +1,13 @@
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pybit.exceptions import InvalidRequestError
 from pybit.unified_trading import HTTP
 
 from config import BYBIT_API_KEY, BYBIT_API_SECRET, BYBIT_TESTNET
 from lib.base_trader import (
-    BaseTrader, Direction, PositionMode, make_client_id,
+    MAX_LIST_PAGES, BaseTrader, Direction, PositionMode, ProtectiveOrder,
+    make_client_id,
 )
 from lib.symbols import to_exchange_symbol
 
@@ -380,6 +381,56 @@ class VeskaldBybit(BaseTrader):
             tpslMode="Full",
             positionIdx=pos_idx,
         )
+
+    def list_protective_orders(self) -> Optional[List[ProtectiveOrder]]:
+        rows = self._list_all(
+            self.client.get_open_orders, limit=50, orderFilter="StopOrder",
+        )
+        if rows is None:
+            return None
+        orders = (
+            self.protective_order(
+                r.get("orderId"), r.get("orderLinkId"), r.get("symbol"), r.get("side"),
+            )
+            for r in rows
+        )
+        return [o for o in orders if o]
+
+    def list_open_positions(self) -> Optional[Set[Tuple[str, Direction]]]:
+        rows = self._list_all(self.client.get_positions, limit=200)
+        if rows is None:
+            return None
+        positions = (
+            (r.get("symbol"), self.position_direction(r.get("side"), r.get("size")))
+            for r in rows
+        )
+        return {p for p in positions if p[1]}
+
+    def cancel_protective_order(self, order: ProtectiveOrder) -> bool:
+        return self._safe_call(
+            self.client.cancel_order,
+            retries=2,
+            category=self.CATEGORY,
+            symbol=order.symbol,
+            orderId=order.order_id,
+        ) is not None
+
+    def _list_all(self, fn, **params) -> Optional[List[Dict[str, Any]]]:
+        """Every page of a USDT-settled list; None if any page fails."""
+        rows: List[Dict[str, Any]] = []
+        cursor = None
+        for _ in range(MAX_LIST_PAGES):
+            resp = self._safe_call(
+                fn, retries=0, category=self.CATEGORY, settleCoin="USDT",
+                cursor=cursor, **params,
+            )
+            if resp is None:
+                return None
+            rows += self._extract_list(resp)
+            cursor = (resp.get("result") or {}).get("nextPageCursor")
+            if not cursor:
+                return rows
+        return None
 
     @staticmethod
     def _extract_list(resp: Any) -> List[Dict[str, Any]]:

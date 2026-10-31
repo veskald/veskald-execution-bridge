@@ -1,6 +1,6 @@
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from coinbase.rest import RESTClient
 
@@ -10,7 +10,8 @@ from config import (
     COINBASE_INTX_PORTFOLIO_UUID,
 )
 from lib.base_trader import (
-    BaseTrader, Direction, PositionMode, make_client_id,
+    MAX_LIST_PAGES, BaseTrader, Direction, PositionMode, ProtectiveOrder,
+    make_client_id,
 )
 from lib.symbols import to_exchange_symbol
 
@@ -355,6 +356,56 @@ class VeskaldCoinbase(BaseTrader):
         self, symbol: str, direction: str, position_mode: PositionMode
     ) -> None:
         self._cancel_stop_orders(symbol=symbol, direction=direction, kind="all")
+
+    def list_protective_orders(self) -> Optional[List[ProtectiveOrder]]:
+        rows: List[Any] = []
+        cursor = None
+        for _ in range(MAX_LIST_PAGES):
+            resp = self._safe_call(
+                self.client.list_orders, retries=0,
+                order_status=["OPEN"], cursor=cursor,
+            )
+            if resp is None:
+                return None
+            page = _to_dict(resp)
+            rows += page.get("orders") or []
+            cursor = page.get("cursor")
+            if not (page.get("has_next") and cursor):
+                break
+        else:
+            return None
+        orders = (
+            self.protective_order(
+                o.get("order_id"), o.get("client_order_id"),
+                o.get("product_id"), o.get("side"),
+            )
+            for o in map(_to_dict, rows)
+        )
+        return [o for o in orders if o]
+
+    def list_open_positions(self) -> Optional[Set[Tuple[str, Direction]]]:
+        portfolio_uuid = self._portfolio_uuid()
+        if not portfolio_uuid:
+            return None
+        resp = self._safe_call(
+            self.client.list_perps_positions, retries=0,
+            portfolio_uuid=portfolio_uuid,
+        )
+        if resp is None:
+            return None
+        positions = (
+            (p.get("product_id"),
+             self.position_direction(p.get("position_side"), p.get("net_size")))
+            for p in map(_to_dict, _to_dict(resp).get("positions") or [])
+        )
+        return {p for p in positions if p[1]}
+
+    def cancel_protective_order(self, order: ProtectiveOrder) -> bool:
+        resp = self._safe_call(
+            self.client.cancel_orders, retries=2, order_ids=[order.order_id],
+        )
+        results = _to_dict(resp).get("results") or []
+        return bool(results) and bool(_to_dict(results[0]).get("success"))
 
     def _place_stop_market(
         self,
